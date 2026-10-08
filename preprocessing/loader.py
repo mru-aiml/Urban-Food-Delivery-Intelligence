@@ -47,13 +47,26 @@ def _candidate_urls():
 
 
 def _download_once(dest):
-    """Download the CSV with stdlib urllib and cache it at dest. Returns path or None."""
+    """Download the CSV with stdlib urllib and cache it at dest. Returns path or None.
+
+    Multiprocess-safe (gunicorn --workers N) and multithread-safe: every
+    downloader uses its OWN uniquely-named temp file and publishes atomically
+    via os.replace, so concurrent workers can never interleave chunks into
+    each other's file or read a half-written dest. If a sibling worker already
+    published (or is still publishing) a valid file, reuse / wait for it.
+    """
+    import time
     import urllib.request
+    import uuid
     os.makedirs(config.DATA_DIR, exist_ok=True)
-    tmp = dest + ".part"
+    # Re-check: a sibling worker may have finished while this one was starting.
+    if _try_local() is not None:
+        return _try_local()
+    # Unique per process AND thread: threads share a pid, so pid alone is not enough.
+    tmp = f"{dest}.part-{os.getpid()}-{uuid.uuid4().hex[:8]}"
     for url in _candidate_urls():
         try:
-            print(f"[loader] downloading {url}")
+            print(f"[loader] downloading {url}", flush=True)
             req = urllib.request.Request(url, headers={"User-Agent": "urban-food-intelligence/1.0"})
             with urllib.request.urlopen(req, timeout=120) as resp, open(tmp, "wb") as fh:
                 while True:
@@ -67,17 +80,40 @@ def _download_once(dest):
                     header = fh.readline()
                 if "," in header and ("Time_taken" in header or "delivery" in header.lower()
                                       or "Weather" in header or "City" in header):
-                    os.replace(tmp, dest)
-                    print(f"[loader] cached dataset -> {dest}")
-                    return dest
-                print(f"[loader] rejected {url}: unexpected header: {header[:120]!r}")
+                    # Prefer a file a sibling worker already published.
+                    existing = _try_local()
+                    if existing is not None and os.path.getsize(existing) > 1000:
+                        print(f"[loader] reusing dataset published by sibling worker -> {existing}", flush=True)
+                        try:
+                            os.remove(tmp)
+                        except OSError:
+                            pass
+                        return existing
+                    try:
+                        os.replace(tmp, dest)
+                        print(f"[loader] cached dataset -> {dest} ({os.path.getsize(dest)} bytes)", flush=True)
+                        return dest
+                    except OSError as oe:
+                        # Lost the publish race (or dest locked): a sibling is
+                        # publishing; stop downloading and wait for their file below.
+                        print(f"[loader] publish deferred ({type(oe).__name__}: {oe}); waiting for sibling file", flush=True)
+                        break
+                print(f"[loader] rejected {url}: unexpected header: {header[:120]!r}", flush=True)
         except Exception as e:
-            print(f"[loader] download failed for {url}: {e}")
+            print(f"[loader] download failed for {url}: {type(e).__name__}: {e}", flush=True)
     try:
         if os.path.exists(tmp):
             os.remove(tmp)
     except Exception:
         pass
+    # Wait for a sibling worker that is still downloading/publishing (cold
+    # start with multiple workers): poll for up to ~90s before giving up.
+    for _ in range(90):
+        local = _try_local()
+        if local is not None:
+            print(f"[loader] using dataset published by sibling worker -> {local}", flush=True)
+            return local
+        time.sleep(1)
     return None
 
 

@@ -22,11 +22,13 @@ STATE = {"raw": None, "clean": None, "df": None, "raw_profile": None,
 
 
 def boot():
+    print("[BOOT] starting dataset load ...", flush=True)
     try:
         from preprocessing.loader import load_raw
         from preprocessing.cleaner import clean, profile_raw
         from preprocessing.feature_engineering import engineer
         raw, _ = load_raw()
+        print(f"[BOOT] raw loaded: rows={len(raw)} cols={len(raw.columns)}", flush=True)
         STATE["raw_profile"] = profile_raw(raw)
         STATE["raw"] = raw
         cdf, etl = clean(raw)
@@ -36,10 +38,11 @@ def boot():
         STATE["df"] = edf
         STATE["features_meta"] = fmeta
         STATE["last_processed"] = datetime.now().isoformat()
-        print(f"[boot] rows={len(edf)} cols={len(edf.columns)}")
+        print(f"[BOOT] OK rows={len(edf)} cols={len(edf.columns)}", flush=True)
+        print(f"[BOOT] columns: {list(edf.columns)}", flush=True)
     except Exception as e:
-        STATE["load_error"] = str(e)
-        print("[boot] FAILED:", e)
+        STATE["load_error"] = f"{type(e).__name__}: {e}"
+        print(f"[BOOT] FAILED: {type(e).__name__}: {e}", flush=True)
         traceback.print_exc()
 
 
@@ -47,6 +50,7 @@ boot()
 
 def need_df():
     if STATE["df"] is None:
+        print(f"[OVERVIEW ERROR] dataset not loaded: {STATE.get('load_error')}", flush=True)
         return jsonify({"error": "Dataset not loaded", "detail": STATE.get("load_error")}), 500
     return None
 
@@ -54,6 +58,7 @@ def safe(fn):
     try:
         return fn()
     except Exception as e:
+        print(f"[API ERROR] {type(e).__name__}: {e}", flush=True)
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
@@ -62,8 +67,12 @@ def safe(fn):
 def health():
     from database.warehouse import warehouse_available
     ok, msg = warehouse_available()
+    df = STATE["df"]
     return jsonify({"status": "ok", "started": STARTED,
-                    "rows": len(STATE["df"]) if STATE["df"] is not None else 0,
+                    "rows": len(df) if df is not None else 0,
+                    "columns": len(df.columns) if df is not None else 0,
+                    "dataset_loaded": df is not None,
+                    "load_error": STATE.get("load_error"),
                     "mysql": {"available": ok, "detail": msg},
                     "demo_mode": STATE["demo_mode"]})
 
@@ -100,13 +109,31 @@ def wh_schema():
 # ---------------------------------------------------------------- overview
 @app.get("/api/overview")
 def overview():
+    print("[OVERVIEW] request received", flush=True)
     err = need_df()
     if err: return err
     def go():
+        import json as _json
         from analytics.overview import overview_stats, overview_charts, live_insights
         df = STATE["df"]
-        return jsonify({"kpis": overview_stats(df), "charts": overview_charts(df),
-                        "insights": live_insights(df), "last_processed": STATE["last_processed"]})
+        print(f"[OVERVIEW] dataframe rows: {len(df)}", flush=True)
+        print(f"[OVERVIEW] dataframe columns: {len(df.columns)}", flush=True)
+        print("[OVERVIEW] calculating KPIs", flush=True)
+        kpis = overview_stats(df)
+        print("[OVERVIEW] calculating charts", flush=True)
+        charts = overview_charts(df)
+        print("[OVERVIEW] calculating insights", flush=True)
+        insights = live_insights(df)
+        payload = {"kpis": kpis, "charts": charts,
+                   "insights": insights, "last_processed": STATE["last_processed"]}
+        print("[OVERVIEW] serializing response", flush=True)
+        try:
+            _json.dumps(payload, allow_nan=False)
+        except Exception as je:
+            print(f"[OVERVIEW ERROR] response not strictly JSON-serializable: {je}", flush=True)
+            raise
+        print("[OVERVIEW] response ready", flush=True)
+        return jsonify(payload)
     return safe(go)
 
 # ---------------------------------------------------------------- delivery

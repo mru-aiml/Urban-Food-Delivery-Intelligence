@@ -1,6 +1,54 @@
 """Overview / executive dashboard calculations — all from real data."""
+import math
 import pandas as pd
 import numpy as np
+
+
+def make_json_safe(value):
+    """Convert numpy/pandas/NaN/Infinity values to strict-JSON-compatible Python types."""
+    if value is None or isinstance(value, (str, bool)):
+        return value
+    if isinstance(value, (np.integer,)):
+        return int(value)
+    if isinstance(value, (np.floating,)):
+        v = float(value)
+        return v if math.isfinite(v) else None
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, (np.bool_,)):
+        return bool(value)
+    if isinstance(value, (pd.Timestamp,)):
+        return value.isoformat() if not pd.isna(value) else None
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat()
+        except Exception:
+            return str(value)
+    return value
+
+
+def _safe_mean(series):
+    v = make_json_safe(float(series.mean()))
+    return None if v is None else round(v, 2)
+
+
+def _safe_median(series):
+    v = make_json_safe(float(series.median()))
+    return None if v is None else round(v, 2)
+
+
+def _safe_round(value, ndigits=2):
+    """round() that maps NaN/Infinity/numpy scalars to None (strict-JSON-safe)."""
+    try:
+        v = make_json_safe(float(value))
+    except Exception:
+        return None
+    return None if v is None else round(v, ndigits)
 
 
 def _pick(df, *names):
@@ -17,10 +65,10 @@ def overview_stats(df):
     out = {}
     out["total_orders"] = int(len(df))
     out["total_records"] = int(len(df))
-    out["avg_delivery_time"] = round(float(df[dt].mean()), 2) if dt else None
-    out["median_delivery_time"] = round(float(df[dt].median()), 2) if dt else None
-    out["avg_distance"] = round(float(df[ds].mean()), 2) if ds else None
-    out["avg_rating"] = round(float(df[rt].mean()), 2) if rt else None
+    out["avg_delivery_time"] = _safe_mean(df[dt]) if dt else None
+    out["median_delivery_time"] = _safe_median(df[dt]) if dt else None
+    out["avg_distance"] = _safe_mean(df[ds]) if ds else None
+    out["avg_rating"] = _safe_mean(df[rt]) if rt else None
     if "_is_delayed" in df.columns:
         out["delayed_orders"] = int(df["_is_delayed"].sum())
         out["on_time_pct"] = round(float((1 - df["_is_delayed"].mean()) * 100), 2)
@@ -31,7 +79,7 @@ def overview_stats(df):
         out["delay_pct"] = None
     if "_speed_kmph" in df.columns:
         s = df["_speed_kmph"].replace([np.inf, -np.inf], np.nan).dropna()
-        out["avg_speed"] = round(float(s.mean()), 2) if len(s) else None
+        out["avg_speed"] = _safe_mean(s) if len(s) else None
     else:
         out["avg_speed"] = None
     return out
@@ -42,8 +90,15 @@ def _group_avg(df, dim, metric):
         return []
     g = df.dropna(subset=[dim]).groupby(dim)[metric].agg(["mean", "count"]).reset_index()
     g.columns = ["label", "value", "count"]
-    g["value"] = g["value"].round(2)
-    return g.sort_values("value").to_dict("records")
+    rows = []
+    for _, r in g.sort_values("value").iterrows():
+        v = make_json_safe(r["value"])
+        rows.append({
+            "label": str(r["label"]),
+            "value": None if v is None else round(float(v), 2),
+            "count": int(r["count"]),
+        })
+    return rows
 
 
 def overview_charts(df, max_points=60):
@@ -61,7 +116,7 @@ def overview_charts(df, max_points=60):
     # avg delivery time by hour
     if "_hour" in df.columns and dt:
         g = df.dropna(subset=["_hour"]).groupby("_hour")[dt].mean().sort_index()
-        out["time_by_hour"] = [{"label": f"{int(k)}:00", "value": round(float(v), 2)} for k, v in g.items()]
+        out["time_by_hour"] = [{"label": f"{int(k)}:00", "value": _safe_round(v)} for k, v in g.items()]
     else:
         out["time_by_hour"] = []
     # distribution histogram
@@ -83,7 +138,7 @@ def overview_charts(df, max_points=60):
                          ("delay_by_vehicle", "_vehicle"), ("delay_by_city", "_city")]:
             if col in df.columns:
                 g = df.groupby(col)["_is_delayed"].mean().sort_values(ascending=False).head(12)
-                out[key] = [{"label": str(k), "value": round(float(v) * 100, 2)} for k, v in g.items()]
+                out[key] = [{"label": str(k), "value": _safe_round(float(v) * 100)} for k, v in g.items()]
     if dt:
         for key, col in [("avg_time_by_traffic", "_traffic"), ("avg_time_by_weather", "_weather"),
                          ("avg_time_by_vehicle", "_vehicle"), ("avg_time_by_city", "_city")]:
