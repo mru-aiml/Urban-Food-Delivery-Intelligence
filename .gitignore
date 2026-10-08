@@ -7,3 +7,5 @@ data/*.csv
 data/*.parquet
 models/*.pkl
 *.log
+.vscode/
+.idea/

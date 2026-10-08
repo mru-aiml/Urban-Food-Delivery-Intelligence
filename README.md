@@ -36,6 +36,15 @@ Without MySQL the app uses the engineered DataFrame directly and reports "MySQL 
 ## API
 `GET /api/health /api/overview /api/delivery-analytics /api/orders?page&size&q&band&sla /api/orders/<id> /api/orders/<id>/explanation /api/dataset-info /api/data-quality /api/warehouse/schema /api/olap(GET meta) POST /api/olap /api/association-rules(GET+POST) /api/clusters(GET+POST) /api/classification /api/anomalies /api/hotspots /api/recommendations POST /api/predict-delay /api/what-if /api/demo-mode`
 
+## Deploying on Render
+`render.yaml` defines a free Python web service (see file for details):
+- Build: `pip install -r requirements.txt` (Python 3.13.7)
+- Start: `gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120`
+- Health check: `/api/health`
+- The app reads Render's `PORT` env var (falls back to `FLASK_PORT`/5000 locally) and binds `0.0.0.0` with `debug=False`.
+- On first boot it downloads `zomato_cleaned.csv` once from Hugging Face and caches it as `data/zomato_cleaned.csv` (ephemeral on Render — re-downloads automatically when missing). No `huggingface_hub`/`datasets` packages required.
+- MySQL is optional: without `MYSQL_*` env vars the app serves everything from its DataFrame warehouse fallback. Never commit `.env` (see `.env.example`).
+
 ## DWM concepts
 ETL + quality metrics, star schema/surrogate keys, OLAP ops, support/confidence/lift, K-Means profiling, precision/recall/F1, anomaly detection, SLA/delay thresholds.
 

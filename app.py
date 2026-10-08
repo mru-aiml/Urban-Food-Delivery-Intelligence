@@ -478,6 +478,14 @@ def index():
     return render_template("index.html")
 
 if __name__ == "__main__":
-    port = int(os.getenv("FLASK_PORT", "5000"))
-    print(f"\nUrban Food Delivery Intelligence -> http://127.0.0.1:{port}\n", flush=True)
+    # Render provides PORT; FLASK_PORT remains the local-dev override.
+    port = int(os.environ.get("PORT", os.environ.get("FLASK_PORT", "5000")))
+    print("\nUrban Food Delivery Intelligence", flush=True)
+    if STATE["df"] is not None:
+        print(f"Dataset loaded successfully", flush=True)
+        print(f"Rows: {len(STATE['df'])}", flush=True)
+        print(f"Columns: {len(STATE['raw'].columns) if STATE['raw'] is not None else len(STATE['df'].columns)}", flush=True)
+    else:
+        print(f"ERROR: dataset failed to load: {STATE.get('load_error')}", flush=True)
+    print(f"Server starting on 0.0.0.0:{port} ...\n", flush=True)
     app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
