@@ -39,8 +39,6 @@ Without MySQL the app uses the engineered DataFrame directly and reports "MySQL 
 ## DWM concepts
 ETL + quality metrics, star schema/surrogate keys, OLAP ops, support/confidence/lift, K-Means profiling, precision/recall/F1, anomaly detection, SLA/delay thresholds.
 
-## Viva (30 sec)
-"Raw Zomato logs → cleaned + engineered (hour, speed, delay flag) → MySQL star schema (fact + 6 dims) → OLAP cube ops → mining (rules/clusters/classifier/anomalies) → risk prediction + why-late evidence + recommendations."
 
 ## Structure
 See spec §4. `models/` holds `delay_model.pkl, cluster_model.pkl, scaler.pkl` (trained on first classification call).
