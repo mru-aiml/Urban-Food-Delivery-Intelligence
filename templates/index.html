@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Urban Food Delivery Intelligence</title>
+<link rel="stylesheet" href="/static/css/style.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+</head>
+<body>
+<div class="app">
+<aside class="sidebar" id="sidebar">
+  <div class="brand"><div class="logo">UF</div><div><div class="brand-t">Urban Food</div><div class="brand-s">Delivery Intelligence</div></div></div>
+  <nav id="nav"></nav>
+  <div class="side-foot"><span class="pill">DWM · BI Platform</span></div>
+</aside>
+<div class="main">
+<header class="topbar">
+  <button class="icon-btn" id="menuBtn"><i class="fa fa-bars"></i></button>
+  <div class="search"><i class="fa fa-search"></i><input id="globalSearch" placeholder="Search orders, city, vehicle… (press Enter)"></div>
+  <div class="top-stats">
+    <span class="chip" id="dsStatus"><i class="fa fa-database"></i> loading…</span>
+    <span class="chip" id="recCount">— records</span>
+    <span class="chip hide-m" id="lastProc">—</span>
+    <button class="icon-btn" id="themeBtn" title="Theme"><i class="fa fa-moon"></i></button>
+  </div>
+</header>
+<main id="views">
+  <!-- OVERVIEW -->
+  <section class="view active" data-view="overview">
+    <div class="page-head"><div><h1>Urban Food Delivery Intelligence</h1><p class="sub">Analyze delivery operations, discover hidden patterns, predict risks, and optimize performance.</p></div>
+    <div class="head-actions"><button class="btn ghost" id="demoBtn">Demo Mode: Off</button><button class="btn primary" onclick="go('predictor')"><i class="fa fa-bolt"></i> Predict Risk</button></div></div>
+    <div class="kpis" id="kpis"></div>
+    <div class="grid2">
+      <div class="card"><div class="card-h">Orders over time <span class="tip" title="Daily order counts from Order_Date">?</span></div><div class="chart-box"><canvas id="chOrders"></canvas></div></div>
+      <div class="card"><div class="card-h">Avg delivery time by hour</div><div class="chart-box"><canvas id="chHour"></canvas></div></div>
+    </div>
+    <div class="grid2">
+      <div class="card"><div class="card-h">Delivery time distribution</div><div class="chart-box"><canvas id="chDist"></canvas></div></div>
+      <div class="card"><div class="card-h">Orders by weather</div><div class="chart-box"><canvas id="chWeather"></canvas></div></div>
+    </div>
+    <div class="grid2">
+      <div class="card"><div class="card-h">Orders by traffic</div><div class="chart-box"><canvas id="chTraffic"></canvas></div></div>
+      <div class="card"><div class="card-h">Orders by vehicle</div><div class="chart-box"><canvas id="chVehicle"></canvas></div></div>
+    </div>
+    <div class="grid2">
+      <div class="card"><div class="card-h">Orders by city (top 12)</div><div class="chart-box"><canvas id="chCity"></canvas></div></div>
+      <div class="card"><div class="card-h">Delay % by traffic</div><div class="chart-box"><canvas id="chDelay"></canvas></div></div>
+    </div>
+    <div class="card"><div class="card-h"><i class="fa fa-lightbulb"></i> Live Data Insights <small>· computed from real data</small></div><div id="insights" class="insights"></div></div>
+    <div class="card"><div class="card-h"><i class="fa fa-star"></i> Why This System Is Different — Key Innovations</div><div class="innov" id="innov"></div></div>
+  </section>
+  <!-- DELIVERY -->
+  <section class="view" data-view="delivery">
+    <div class="page-head"><div><h1>Delivery Intelligence</h1><p class="sub">Slice performance by city, weather, traffic, vehicle and time.</p></div></div>
+    <div class="card"><div class="filters" id="delFilters"></div></div>
+    <div class="kpis" id="delKpis"></div>
+    <div class="grid2">
+      <div class="card"><div class="card-h">Time vs distance (sample)</div><div class="chart-box"><canvas id="dScatter"></canvas></div></div>
+      <div class="card"><div class="card-h">Avg time by traffic</div><div class="chart-box"><canvas id="dTraffic"></canvas></div></div>
+    </div>
+    <div class="grid3">
+      <div class="card"><div class="card-h">By weather</div><div class="chart-box"><canvas id="dWeather"></canvas></div></div>
+      <div class="card"><div class="card-h">By vehicle</div><div class="chart-box"><canvas id="dVehicle"></canvas></div></div>
+      <div class="card"><div class="card-h">By hour</div><div class="chart-box"><canvas id="dHour"></canvas></div></div>
+    </div>
+    <div class="card"><div class="card-h">Performance Summary</div><div id="perfSummary"></div></div>
+    <div class="card"><div class="card-h">SLA Monitor <small>· default 40 min</small></div>
+      <div class="sla-row"><label>SLA threshold (min) <input type="number" id="slaInput" value="40" min="10" max="120"></label>
+      <button class="btn primary" id="slaBtn">Apply</button><div id="slaCards" class="sla-cards"></div></div>
+      <div class="table-wrap"><table id="slaTable"><thead><tr><th>Order</th><th>City</th><th>Time</th><th>Band</th></tr></thead><tbody></tbody></table></div>
+    </div>
+  </section>
+  <!-- OLAP -->
+  <section class="view" data-view="olap">
+    <div class="page-head"><div><h1>OLAP Explorer</h1><p class="sub">Roll-up · Drill-down · Slice · Dice · Pivot on the delivery cube.</p></div></div>
+    <div class="grid-olap">
+      <div class="card"><div class="card-h">Control Panel</div>
+        <label>Operation<select id="olapOp"><option>roll-up</option><option>drill-down</option><option>slice</option><option>dice</option><option>pivot</option></select></label>
+        <p class="hint" id="olapHint"></p>
+        <label>Dimension<select id="olapDim"></select></label>
+        <div class="row2"><label>Rows<select id="olapRows"></select></label><label>Columns<select id="olapCols"></select></label></div>
+        <label>Metric<select id="olapMetric"></select></label>
+        <label>Filters (key=value, one per line)<textarea id="olapFilters" rows="3" placeholder="_city=Metropolitian&#10;_traffic=Jam"></textarea></label>
+        <button class="btn primary" id="olapRun">Run OLAP</button>
+      </div>
+      <div class="card"><div class="card-h">Result <span id="olapOpName" class="pill"></span></div>
+        <p class="hint" id="olapExpl"></p><div class="chart-box"><canvas id="olapChart"></canvas></div>
+        <div class="table-wrap" style="max-height:320px"><table id="olapTable"><thead></thead><tbody></tbody></table></div>
+      </div>
+    </div>
+  </section>
+  <!-- MINING -->
+  <section class="view" data-view="mining">
+    <div class="page-head"><div><h1>Data Mining Center</h1><p class="sub">Hidden patterns · behavior clusters · delay classifier · anomalies.</p></div></div>
+    <div class="tabs" id="mineTabs"><button data-t="assoc" class="on">Association Rules</button><button data-t="cluster">Clustering</button><button data-t="class">Classification</button><button data-t="anom">Anomalies</button></div>
+    <div class="mine-pane" data-p="assoc">
+      <div class="card"><div class="row"><label>Min support <input id="minSup" type="number" step="0.01" value="0.05"></label><label>Min confidence <input id="minConf" type="number" step="0.05" value="0.4"></label><button class="btn primary" id="mineBtn">Discover Patterns</button></div>
+      <div id="rulesOut" class="rules"></div></div>
+    </div>
+    <div class="mine-pane hidden" data-p="cluster">
+      <div class="card"><div class="row"><label>K <input id="kVal" type="number" value="4" min="2" max="8"></label><button class="btn primary" id="clBtn">Run K-Means</button></div>
+      <div id="clOut"></div><div class="chart-box"><canvas id="clChart"></canvas></div></div>
+    </div>
+    <div class="mine-pane hidden" data-p="class">
+      <div class="card"><div class="row"><button class="btn primary" id="cfBtn">Train / Evaluate Classifier</button></div><div id="cfOut"></div><div class="chart-box"><canvas id="cfChart"></canvas></div></div>
+    </div>
+    <div class="mine-pane hidden" data-p="anom">
+      <div class="card"><div class="row"><button class="btn primary" id="anBtn">Detect Anomalies</button></div><div class="table-wrap"><table id="anTable"><thead><tr><th>Order</th><th>Dist</th><th>Time</th><th>Expected</th><th>Dev</th><th>Note</th></tr></thead><tbody></tbody></table></div></div>
+    </div>
+  </section>
+  <!-- PREDICTOR -->
+  <section class="view" data-view="predictor">
+    <div class="page-head"><div><h1>Delivery Risk Predictor</h1><p class="sub">Estimate delay risk with the trained RandomForest model.</p></div></div>
+    <div class="grid2">
+      <div class="card"><div class="card-h">Inputs</div><div id="predForm" class="form"></div><button class="btn primary big" id="predBtn">Predict Delivery Risk</button>
+        <div class="card" style="margin-top:12px"><div class="card-h">What-If Simulator</div><div id="simForm" class="form"></div><button class="btn ghost" id="simBtn">Run Simulation</button><div id="simOut"></div></div>
+      </div>
+      <div class="card"><div class="card-h">Result</div><div id="predOut"><div class="empty">Fill inputs and run prediction.</div></div></div>
+    </div>
+  </section>
+  <!-- WHY LATE -->
+  <section class="view" data-view="why">
+    <div class="page-head"><div><h1>Why Was This Delivery Late?</h1><p class="sub">Explainable evidence per order — association, not causation.</p></div></div>
+    <div class="card"><div class="row"><input id="whySearch" placeholder="Enter Order ID (e.g. 0xcdcd)"><button class="btn primary" id="whyBtn">Explain</button><button class="btn ghost" id="whyRand">Random delayed order</button></div>
+    <div id="whyOut"></div></div>
+  </section>
+  <!-- HOTSPOTS -->
+  <section class="view" data-view="hotspots">
+    <div class="page-head"><div><h1>Hotspot Intelligence</h1><p class="sub">Where do delays concentrate?</p></div></div>
+    <div class="card"><div id="map" style="height:380px;border-radius:12px"></div><p class="hint" id="geoNote"></p></div>
+    <div class="card"><div class="card-h">Area / City Hotspots</div><div class="table-wrap"><table id="hotTable"><thead><tr><th>Area</th><th>Orders</th><th>Avg time</th><th>Delay %</th><th>Avg dist</th><th>Rating</th></tr></thead><tbody></tbody></table></div></div>
+  </section>
+  <!-- RECOMMENDATIONS -->
+  <section class="view" data-view="recs">
+    <div class="page-head"><div><h1>Smart Recommendations</h1><p class="sub">Problem → Evidence → Action → Expected impact.</p></div></div>
+    <div id="recList" class="recs"></div>
+  </section>
+  <!-- WAREHOUSE -->
+  <section class="view" data-view="warehouse">
+    <div class="page-head"><div><h1>Data Warehouse Explorer</h1><p class="sub">Star schema · ETL pipeline · MySQL DDL.</p></div></div>
+    <div class="card"><div class="card-h">Star Schema (click a table)</div><div id="schemaViz" class="schema"></div><div id="schemaDetail"></div></div>
+    <div class="card"><div class="card-h">ETL Pipeline</div><div id="etlPipe" class="etl"></div></div>
+  </section>
+  <!-- QUALITY -->
+  <section class="view" data-view="quality">
+    <div class="page-head"><div><h1>Data Quality Center</h1><p class="sub">Completeness · Uniqueness · Validity · Consistency.</p></div></div>
+    <div class="card"><div class="row"><button class="btn primary" id="dqBtn">Run Data Quality Check</button><div id="dqScore"></div></div><div id="dqOut"></div></div>
+  </section>
+  <!-- EXPLORER -->
+  <section class="view" data-view="explorer">
+    <div class="page-head"><div><h1>Dataset Explorer</h1><p class="sub">Paginated view — never loads all 39K rows at once.</p></div></div>
+    <div class="card"><div class="row"><input id="exQ" placeholder="Search…"><select id="exBand"><option value="all">All SLA</option><option>On Target</option><option>At Risk</option><option>SLA Breached</option></select><button class="btn primary" id="exBtn">Search</button><span id="exInfo"></span></div>
+    <div class="table-wrap"><table id="exTable"><thead></thead><tbody></tbody></table></div>
+    <div class="row"><button class="btn ghost" id="exPrev">Prev</button><span id="exPage"></span><button class="btn ghost" id="exNext">Next</button></div></div>
+  </section>
+  <!-- ABOUT -->
+  <section class="view" data-view="about">
+    <div class="page-head"><div><h1>About Project</h1><p class="sub">Urban Food Delivery Intelligence System — a DWM mini-project.</p></div></div>
+    <div class="card about">
+      <h3>Problem Statement</h3><p>Food delivery operations generate large operational data, but raw logs don't explain <b>why</b> delays happen or <b>what to do</b>. This system turns raw Zomato delivery records into a warehouse + OLAP cube + mining models that predict risk and recommend actions.</p>
+      <h3>Objective &amp; Flow</h3><p>RAW → ETL → DATA WAREHOUSE (star schema, MySQL) → OLAP (roll-up/drill-down/slice/dice/pivot) → DATA MINING (Apriori, K-Means, RandomForest, IsolationForest) → PREDICTION → EXPLAINABLE INSIGHTS → RECOMMENDATIONS.</p>
+      <h3>Dataset</h3><p id="aboutDs">allenborochin/zomato_delivery_EDA · zomato_cleaned.csv (~39K rows). Columns: delivery time, distance, weather, traffic, vehicle, city, order type, ratings, geo-coordinates, timestamps.</p>
+      <h3>DWM Concepts Demonstrated</h3><ul><li>ETL with quality metrics</li><li>Star schema, surrogate keys, facts/dimensions</li><li>OLAP operations</li><li>Association rules (support/confidence/lift)</li><li>Clustering + profiling</li><li>Classification + confusion matrix</li><li>Anomaly detection</li></ul>
+      <h3>Unique Features</h3><p>Risk Predictor · Why-Late explainer · Pattern discovery · Behavior clustering · Hotspots · What-if simulator · Smart recommendations · SLA monitor · Warehouse explorer.</p>
+      <h3>Technologies</h3><p>Flask, Pandas, NumPy, scikit-learn, mlxtend, MySQL, Chart.js, Leaflet, vanilla JS.</p>
+      <h3>Future Scope</h3><p>Real-time streaming, route optimization, demand forecasting, SHAP explanations.</p>
+    </div>
+  </section>
+</main>
+</div>
+</div>
+<div class="toast" id="toast"></div>
+<script src="/static/js/app.js"></script>
+<script src="/static/js/dashboard.js"></script>
+<script src="/static/js/delivery.js"></script>
+<script src="/static/js/olap.js"></script>
+<script src="/static/js/mining.js"></script>
+<script src="/static/js/predictor.js"></script>
+<script src="/static/js/hotspots.js"></script>
+<script src="/static/js/warehouse.js"></script>
+</body>
+</html>

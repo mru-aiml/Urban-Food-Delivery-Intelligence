@@ -1,0 +1,14 @@
+# Python 3.13 compatible pins (all have official CPython 3.13 Windows wheels).
+# NOTE: numpy 1.26.4 is intentionally NOT used — it has no 3.13 wheels and pip
+# falls back to a broken MINGW-W64 build. numpy>=2.0 is required for 3.13.
+Flask==3.1.2
+flask-cors==6.0.1
+pandas==2.3.3
+numpy==2.2.6
+scikit-learn==1.7.2
+mlxtend==0.23.4
+mysql-connector-python==9.4.0
+joblib==1.5.2
+python-dotenv==1.2.1
+scipy==1.16.3
+matplotlib==3.10.6
