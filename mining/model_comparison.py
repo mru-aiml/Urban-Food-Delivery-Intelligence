@@ -24,6 +24,12 @@ import config
 CACHE_PATH = os.path.join(config.MODELS_DIR, "comparison_cache.json")
 _MEM = {}
 _SEED = int(getattr(config, "RANDOM_STATE", 42))
+# Bump when experiment code/config changes so stale cached results are not reused.
+CODE_VERSION = 2
+
+
+def _key(base):
+    return f"{base}:v{CODE_VERSION}"
 
 
 def _r(x, nd=4):
@@ -87,7 +93,7 @@ def _store(key, dkey, payload):
 
 # ---------------------------------------------------------------- classification
 def compare_classification(df):
-    key, dkey = "classification", _dataset_key(df)
+    key, dkey = _key("classification"), _dataset_key(df)
     hit = _cached(key, dkey)
     if hit is not None:
         return hit
@@ -111,13 +117,20 @@ def compare_classification(df):
                "n_train": int(len(Xtr)), "n_test": int(len(Xte))}
     cands = [
         ("Logistic Regression",
-         make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000, random_state=_SEED))),
-        ("Decision Tree", DecisionTreeClassifier(random_state=_SEED)),
-        ("Random Forest", RandomForestClassifier(n_estimators=100, random_state=_SEED, n_jobs=-1)),
-        ("Gradient Boosting", GradientBoostingClassifier(random_state=_SEED)),
+         make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000, random_state=_SEED)),
+         {"solver": "lbfgs", "max_iter": 1000, "scaled": True}),
+        ("Decision Tree", DecisionTreeClassifier(random_state=_SEED),
+         {"max_depth": None}),
+        ("Random Forest", RandomForestClassifier(n_estimators=100, random_state=_SEED, n_jobs=-1),
+         {"n_estimators": 100}),
+        # 50 trees + row subsampling: full 100-tree GB exceeds the free-tier
+        # worker memory on Render; config reported honestly below.
+        ("Gradient Boosting", GradientBoostingClassifier(n_estimators=50, subsample=0.8,
+                                                         random_state=_SEED),
+         {"n_estimators": 50, "subsample": 0.8}),
     ]
     models = []
-    for name, clf in cands:
+    for name, clf, params in cands:
         t0 = time.time()
         try:
             clf.fit(Xtr, ytr)
@@ -138,7 +151,7 @@ def compare_classification(df):
             auc = _r(roc_auc_score(yte, proba)) if proba is not None else None
         except Exception:
             auc = None
-        models.append({"name": name,
+        models.append({"name": name, "params": params,
                        "accuracy": _r(accuracy_score(yte, pred)),
                        "precision": _r(precision_score(yte, pred, zero_division=0)),
                        "recall": _r(recall_score(yte, pred, zero_division=0)),
@@ -184,7 +197,7 @@ def _cluster_frame(df, n=CLUSTER_SAMPLE_N):
 
 
 def compare_clustering(df, k=4):
-    key, dkey = f"clustering:k={k}", _dataset_key(df)
+    key, dkey = _key(f"clustering:k={k}"), _dataset_key(df)
     hit = _cached(key, dkey)
     if hit is not None:
         return hit
@@ -257,7 +270,7 @@ def _basket(df):
 
 
 def compare_association(df, min_support=0.05, min_confidence=0.4):
-    key, dkey = f"association:s={min_support}:c={min_confidence}", _dataset_key(df)
+    key, dkey = _key(f"association:s={min_support}:c={min_confidence}"), _dataset_key(df)
     hit = _cached(key, dkey)
     if hit is not None:
         return hit
@@ -310,7 +323,7 @@ ANOMALY_SAMPLE_N = 5000
 
 
 def compare_anomaly(df, contamination=0.02):
-    key, dkey = f"anomaly:c={contamination}", _dataset_key(df)
+    key, dkey = _key(f"anomaly:c={contamination}"), _dataset_key(df)
     hit = _cached(key, dkey)
     if hit is not None:
         return hit
