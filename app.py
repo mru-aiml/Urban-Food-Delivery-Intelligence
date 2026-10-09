@@ -83,13 +83,18 @@ def build_fingerprint():
         _hhf = os.path.abspath(getattr(_hh, "__file__", ""))
         with open(_hhf, "rb") as _fh:
             np_hist_sha = _hl3.sha256(_fh.read()).hexdigest()[:16]
+        # TEMPORARY-DIAG: excerpt of deployed fast-path source (remove after fix)
+        with open(_hhf, "r", encoding="utf-8", errors="replace") as _fh:
+            _hlines = _fh.read().splitlines()
+        np_hist_excerpt = "\n".join(f"{i + 1}:{l}" for i, l in enumerate(_hlines[805:905]))
     except Exception:
-        _hhf, np_hist_sha = "unknown", "unknown"
+        _hhf, np_hist_sha, np_hist_excerpt = "unknown", "unknown", "unavailable"
     return {"commit": (sha[:12] if sha != "unknown" else "unknown"),
             "python": pyv, "numpy": npv, "pandas": pdv,
             "app_file": os.path.abspath(__file__), "overview_module": ovmod,
             "app_sha256_16": app_sha, "overview_sha256_16": ov_sha,
-            "numpy_hist_file": _hhf, "numpy_hist_sha256_16": np_hist_sha}
+            "numpy_hist_file": _hhf, "numpy_hist_sha256_16": np_hist_sha,
+            "numpy_hist_excerpt_806_905": np_hist_excerpt}
 
 # ---------------------------------------------------------------- state
 STATE = {"raw": None, "clean": None, "df": None, "raw_profile": None,
