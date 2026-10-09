@@ -15,6 +15,59 @@ app = Flask(__name__)
 CORS(app)
 STARTED = datetime.now().isoformat()
 
+# ---------------------------------------------------------------- diagnostics
+def _git_sha_fallback():
+    """Best-effort local git SHA (Render containers may not ship .git)."""
+    try:
+        here = os.path.dirname(os.path.abspath(__file__))
+        head = os.path.join(here, ".git", "HEAD")
+        if not os.path.exists(head):
+            return "unknown"
+        with open(head, "r", encoding="utf-8", errors="replace") as fh:
+            ref = fh.read().strip()
+        if ref.startswith("ref:"):
+            refpath = os.path.join(here, ".git", *ref.split()[1].split("/"))
+            if os.path.exists(refpath):
+                with open(refpath, "r", encoding="utf-8", errors="replace") as fh:
+                    return fh.read().strip() or "unknown"
+            packed = os.path.join(here, ".git", "packed-refs")
+            if os.path.exists(packed):
+                want = ref.split()[1]
+                with open(packed, "r", encoding="utf-8", errors="replace") as fh:
+                    for line in fh:
+                        parts = line.strip().split()
+                        if len(parts) == 2 and parts[1] == want:
+                            return parts[0]
+            return "unknown"
+        return ref or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def build_fingerprint():
+    """Non-sensitive build/runtime fingerprint for deployment verification."""
+    sha = (os.environ.get("RENDER_GIT_COMMIT") or "").strip() or _git_sha_fallback()
+    try:
+        pyv = __import__("sys").version.split()[0]
+    except Exception:
+        pyv = "unknown"
+    try:
+        npv = np.__version__
+    except Exception:
+        npv = "unknown"
+    try:
+        pdv = pd.__version__
+    except Exception:
+        pdv = "unknown"
+    try:
+        import analytics.overview as _ov
+        ovmod = os.path.abspath(getattr(_ov, "__file__", "unknown"))
+    except Exception as e:
+        ovmod = f"import-failed: {type(e).__name__}: {e}"
+    return {"commit": (sha[:12] if sha != "unknown" else "unknown"),
+            "python": pyv, "numpy": npv, "pandas": pdv,
+            "app_file": os.path.abspath(__file__), "overview_module": ovmod}
+
 # ---------------------------------------------------------------- state
 STATE = {"raw": None, "clean": None, "df": None, "raw_profile": None,
          "etl": None, "features_meta": None, "load_error": None,
@@ -61,7 +114,7 @@ def safe(fn):
         return fn()
     except Exception as e:
         print(f"[API ERROR] {type(e).__name__}: {e}", flush=True)
-        traceback.print_exc()
+        app.logger.exception("[API ERROR] traceback (server-side only)")
         return jsonify({"error": str(e)}), 500
 
 # ---------------------------------------------------------------- health/meta
@@ -75,6 +128,7 @@ def health():
                     "columns": len(df.columns) if df is not None else 0,
                     "dataset_loaded": df is not None,
                     "load_error": STATE.get("load_error"),
+                    "build": build_fingerprint(),
                     "mysql": {"available": ok, "detail": msg},
                     "demo_mode": STATE["demo_mode"]})
 
@@ -120,17 +174,29 @@ def overview():
         df = STATE["df"]
         print(f"[OVERVIEW] dataframe rows: {len(df)}", flush=True)
         print(f"[OVERVIEW] dataframe columns: {len(df.columns)}", flush=True)
-        print("[OVERVIEW] calculating KPIs", flush=True)
-        kpis = overview_stats(df)
-        print("[OVERVIEW] KPIs complete", flush=True)
-        print("[OVERVIEW] calculating charts", flush=True)
-        charts = overview_charts(df)
-        for _ck, _cs in charts.items():
-            print(f"[OVERVIEW DEBUG] {_ck}: rows={len(_cs)}", flush=True)
-        print("[OVERVIEW] charts complete", flush=True)
-        print("[OVERVIEW] calculating insights", flush=True)
-        insights = live_insights(df)
-        print("[OVERVIEW] insights complete", flush=True)
+        try:
+            print("[OVERVIEW] calculating KPIs", flush=True)
+            kpis = overview_stats(df)
+            print("[OVERVIEW] KPIs complete", flush=True)
+        except Exception:
+            app.logger.exception("[OVERVIEW] failed at stage: KPIs")
+            raise
+        try:
+            print("[OVERVIEW] calculating charts", flush=True)
+            charts = overview_charts(df)
+            for _ck, _cs in charts.items():
+                print(f"[OVERVIEW DEBUG] {_ck}: rows={len(_cs)}", flush=True)
+            print("[OVERVIEW] charts complete", flush=True)
+        except Exception:
+            app.logger.exception("[OVERVIEW] failed at stage: charts")
+            raise
+        try:
+            print("[OVERVIEW] calculating insights", flush=True)
+            insights = live_insights(df)
+            print("[OVERVIEW] insights complete", flush=True)
+        except Exception:
+            app.logger.exception("[OVERVIEW] failed at stage: insights")
+            raise
         payload = {"kpis": kpis, "charts": charts,
                    "insights": insights, "last_processed": STATE["last_processed"]}
         print("[OVERVIEW] serializing response", flush=True)
@@ -138,8 +204,10 @@ def overview():
             _json.dumps(payload, allow_nan=False)
         except Exception as je:
             print(f"[OVERVIEW ERROR] response not strictly JSON-serializable: {je}", flush=True)
+            app.logger.exception("[OVERVIEW] failed at stage: serialization")
             raise
         print("[OVERVIEW] response ready", flush=True)
+        print("[OVERVIEW] serialization complete", flush=True)
         return jsonify(payload)
     return safe(go)
 
