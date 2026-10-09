@@ -89,14 +89,19 @@ def build_fingerprint():
         np_hist_excerpt = "\n".join(f"{i + 1}:{l}" for i, l in enumerate(_hlines[805:905]))
         # TEMPORARY-DIAG: upstream helpers region (ravel/outer-edges/bin-edges)
         np_hist_excerpt2 = "\n".join(f"{i + 1}:{l}" for i, l in enumerate(_hlines[250:470]))
+        # TEMPORARY-DIAG: per-100-line chunk hashes to localize any file difference
+        _chunks = {}
+        for _ci in range(0, len(_hlines), 100):
+            _ch = _hlines[_ci:_ci + 100]
+            _chunks[f"{_ci + 1}-{_ci + len(_ch)}"] = _hl3.sha256(
+                "\n".join(_ch).encode("utf-8", errors="replace")).hexdigest()[:12]
         # TEMPORARY-DIAG: C-level bincount sanity probe (remove after fix)
         _bc = np.bincount(np.array([0, 1, 2] * 5, dtype=np.intp), minlength=20)
         np_bincount_probe = {"shape": list(_bc.shape), "sum": int(_bc.sum())}
     except Exception as _be:
         _hhf, np_hist_sha, np_hist_excerpt, np_hist_excerpt2 = "unknown", "unknown", "unavailable", "unavailable"
+        _chunks = {"error": "unavailable"}
         np_bincount_probe = {"error": f"{type(_be).__name__}: {_be}"}
-    except Exception:
-        _hhf, np_hist_sha, np_hist_excerpt = "unknown", "unknown", "unavailable"
     return {"commit": (sha[:12] if sha != "unknown" else "unknown"),
             "python": pyv, "numpy": npv, "pandas": pdv,
             "app_file": os.path.abspath(__file__), "overview_module": ovmod,
@@ -104,6 +109,7 @@ def build_fingerprint():
             "numpy_hist_file": _hhf, "numpy_hist_sha256_16": np_hist_sha,
             "numpy_hist_excerpt_806_905": np_hist_excerpt,
             "numpy_hist_excerpt_251_470": np_hist_excerpt2,
+            "numpy_hist_chunks": _chunks,
             "numpy_bincount_probe": np_bincount_probe}
 
 # ---------------------------------------------------------------- state
