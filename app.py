@@ -598,7 +598,7 @@ def live_status():
             if info["exists"]:
                 info["size"] = int(os.path.getsize(mc.CACHE_PATH))
                 with open(mc.CACHE_PATH, "r", encoding="utf-8") as _fh:
-                    info["keys"] = sorted((json.load(_fh).get("entries") or {}).keys())
+                    info["keys"] = sorted((_js.load(_fh).get("entries") or {}).keys())
             out["comparison_cache"] = info
         except Exception as e:
             out["comparison_cache"] = {"error": f"{type(e).__name__}: {e}"}
