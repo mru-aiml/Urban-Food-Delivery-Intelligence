@@ -292,6 +292,10 @@ def overview():
                          "sel_shape": list(getattr(_sel, "shape", []) or []),
                          "sel_dtype": str(getattr(_sel, "dtype", "")),
                          "dropna_shape": list(getattr(_sel.dropna(), "shape", []) or []) if _sel is not None else None,
+                         "sel_min": (float(_sel.min()) if _sel is not None else None),
+                         "sel_max": (float(_sel.max()) if _sel is not None else None),
+                         "sel_mean": (float(_sel.mean()) if _sel is not None else None),
+                         "sel_nunique": (int(_sel.nunique()) if _sel is not None else None),
                          "df_shape": list(df.shape),
                          "cols_unique": bool(df.columns.is_unique),
                          "numpy": np.__version__}
