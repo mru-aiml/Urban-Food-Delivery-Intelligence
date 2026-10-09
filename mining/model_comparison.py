@@ -25,7 +25,7 @@ CACHE_PATH = os.path.join(config.MODELS_DIR, "comparison_cache.json")
 _MEM = {}
 _SEED = int(getattr(config, "RANDOM_STATE", 42))
 # Bump when experiment code/config changes so stale cached results are not reused.
-CODE_VERSION = 3
+CODE_VERSION = 4
 
 
 def _key(base):
@@ -121,8 +121,8 @@ def compare_classification(df):
          {"solver": "lbfgs", "max_iter": 1000, "scaled": True}),
         ("Decision Tree", DecisionTreeClassifier(random_state=_SEED),
          {"max_depth": None}),
-        ("Random Forest", RandomForestClassifier(n_estimators=100, random_state=_SEED, n_jobs=2),
-         {"n_estimators": 100, "n_jobs": 2}),
+        ("Random Forest", RandomForestClassifier(n_estimators=30, random_state=_SEED, n_jobs=2),
+         {"n_estimators": 30, "n_jobs": 2}),
         # HistGradientBoosting (binned, early-stopping): same gradient-boosting
         # family, far leaner than exact greedy GB, which exceeds free-tier
         # worker memory on Render. Exact class reported honestly.
