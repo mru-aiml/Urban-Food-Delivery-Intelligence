@@ -119,17 +119,23 @@ def overview_charts(df, max_points=60):
         out["time_by_hour"] = [{"label": f"{int(k)}:00", "value": _safe_round(v)} for k, v in g.items()]
     else:
         out["time_by_hour"] = []
-    # distribution histogram
+    # distribution histogram: 20 equal-width bins over the observed range.
+    # NOTE (production fix): bin edges are passed explicitly. This is
+    # identical to bins=20, but makes numpy use its cumulative histogram path
+    # instead of the bincount fast path, which raises
+    # "operands could not be broadcast together with shapes (20,) (22,) (20,)"
+    # for this input in the production container (all other numpy/pandas
+    # paths there behave normally).
     if dt:
-        # TEMPORARY-DIAG: log exact histogram input (remove after production fix)
-        _sel = df[dt]
-        _dn = _sel.dropna()
-        print(f"[OVERVIEW DEBUG] hist input: dt={dt!r} type={type(_sel).__name__} "
-              f"shape={getattr(_sel, 'shape', None)} dtype={getattr(_sel, 'dtype', '')} "
-              f"dropna_shape={getattr(_dn, 'shape', None)} "
-              f"cols_unique={bool(df.columns.is_unique)} numpy={np.__version__}", flush=True)
-        h, edges = np.histogram(_dn, bins=20)
-        out["time_distribution"] = [{"label": f"{edges[i]:.0f}-{edges[i+1]:.0f}", "value": int(h[i])} for i in range(len(h))]
+        _dn = df[dt].dropna()
+        if len(_dn) == 0:
+            out["time_distribution"] = []
+        else:
+            _lo, _hi = float(_dn.min()), float(_dn.max())
+            if _lo == _hi:  # same range expansion numpy applies to constant input
+                _lo, _hi = _lo - 0.5, _hi + 0.5
+            h, edges = np.histogram(_dn, bins=np.linspace(_lo, _hi, 21))
+            out["time_distribution"] = [{"label": f"{edges[i]:.0f}-{edges[i+1]:.0f}", "value": int(h[i])} for i in range(len(h))]
     else:
         out["time_distribution"] = []
     for key, col in [("by_weather", "_weather"), ("by_traffic", "_traffic"),

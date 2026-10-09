@@ -64,53 +64,9 @@ def build_fingerprint():
         ovmod = os.path.abspath(getattr(_ov, "__file__", "unknown"))
     except Exception as e:
         ovmod = f"import-failed: {type(e).__name__}: {e}"
-    try:
-        import hashlib as _hl
-        with open(os.path.abspath(__file__), "rb") as _fh:
-            app_sha = _hl.sha256(_fh.read()).hexdigest()[:16]
-    except Exception:
-        app_sha = "unknown"
-    try:
-        import hashlib as _hl2
-        _ovp = ovmod if ovmod.endswith(".py") else ovmod.replace(".pyc", ".py")
-        with open(_ovp, "rb") as _fh:
-            ov_sha = _hl2.sha256(_fh.read()).hexdigest()[:16]
-    except Exception:
-        ov_sha = "unknown"
-    try:
-        import hashlib as _hl3
-        import numpy.lib._histograms_impl as _hh
-        _hhf = os.path.abspath(getattr(_hh, "__file__", ""))
-        with open(_hhf, "rb") as _fh:
-            np_hist_sha = _hl3.sha256(_fh.read()).hexdigest()[:16]
-        # TEMPORARY-DIAG: excerpt of deployed fast-path source (remove after fix)
-        with open(_hhf, "r", encoding="utf-8", errors="replace") as _fh:
-            _hlines = _fh.read().splitlines()
-        np_hist_excerpt = "\n".join(f"{i + 1}:{l}" for i, l in enumerate(_hlines[805:905]))
-        # TEMPORARY-DIAG: upstream helpers region (ravel/outer-edges/bin-edges)
-        np_hist_excerpt2 = "\n".join(f"{i + 1}:{l}" for i, l in enumerate(_hlines[250:470]))
-        # TEMPORARY-DIAG: per-100-line chunk hashes to localize any file difference
-        _chunks = {}
-        for _ci in range(0, len(_hlines), 100):
-            _ch = _hlines[_ci:_ci + 100]
-            _chunks[f"{_ci + 1}-{_ci + len(_ch)}"] = _hl3.sha256(
-                "\n".join(_ch).encode("utf-8", errors="replace")).hexdigest()[:12]
-        # TEMPORARY-DIAG: C-level bincount sanity probe (remove after fix)
-        _bc = np.bincount(np.array([0, 1, 2] * 5, dtype=np.intp), minlength=20)
-        np_bincount_probe = {"shape": list(_bc.shape), "sum": int(_bc.sum())}
-    except Exception as _be:
-        _hhf, np_hist_sha, np_hist_excerpt, np_hist_excerpt2 = "unknown", "unknown", "unavailable", "unavailable"
-        _chunks = {"error": "unavailable"}
-        np_bincount_probe = {"error": f"{type(_be).__name__}: {_be}"}
     return {"commit": (sha[:12] if sha != "unknown" else "unknown"),
             "python": pyv, "numpy": npv, "pandas": pdv,
-            "app_file": os.path.abspath(__file__), "overview_module": ovmod,
-            "app_sha256_16": app_sha, "overview_sha256_16": ov_sha,
-            "numpy_hist_file": _hhf, "numpy_hist_sha256_16": np_hist_sha,
-            "numpy_hist_excerpt_806_905": np_hist_excerpt,
-            "numpy_hist_excerpt_251_470": np_hist_excerpt2,
-            "numpy_hist_chunks": _chunks,
-            "numpy_bincount_probe": np_bincount_probe}
+            "app_file": os.path.abspath(__file__), "overview_module": ovmod}
 
 # ---------------------------------------------------------------- state
 STATE = {"raw": None, "clean": None, "df": None, "raw_profile": None,
@@ -126,7 +82,7 @@ def boot():
         from preprocessing.loader import load_raw
         from preprocessing.cleaner import clean, profile_raw
         from preprocessing.feature_engineering import engineer
-        raw, raw_meta = load_raw()
+        raw, _raw_meta = load_raw()
         print(f"[BOOT] raw loaded: rows={len(raw)} cols={len(raw.columns)}", flush=True)
         STATE["raw_profile"] = profile_raw(raw)
         STATE["raw"] = raw
@@ -136,8 +92,6 @@ def boot():
         edf, fmeta = engineer(cdf)
         STATE["df"] = edf
         STATE["features_meta"] = fmeta
-        STATE["diag"] = _boot_data_diag(edf, (raw_meta or {}).get("source_path"))
-        print(f"[BOOT] diag: {STATE['diag']}", flush=True)
         STATE["last_processed"] = datetime.now().isoformat()
         print(f"[BOOT] OK rows={len(edf)} cols={len(edf.columns)}", flush=True)
         print(f"[BOOT] columns: {list(edf.columns)}", flush=True)
@@ -145,46 +99,6 @@ def boot():
         STATE["load_error"] = f"{type(e).__name__}: {e}"
         print(f"[BOOT] FAILED: {type(e).__name__}: {e}", flush=True)
         traceback.print_exc()
-
-
-def _boot_data_diag(edf, source_path):
-    """Non-sensitive boot-time data identity snapshot (never breaks boot).
-
-    Mirrors the exact groupings used by /api/overview so a production-only
-    shape mismatch can be compared remotely against local values.
-    """
-    d = {}
-    try:
-        import hashlib
-        try:
-            h = hashlib.md5()
-            with open(source_path, "rb") as fh:
-                for chunk in iter(lambda: fh.read(1024 * 256), b""):
-                    h.update(chunk)
-            d["csv_md5"] = h.hexdigest()
-        except Exception as e:
-            d["csv_md5"] = f"unavailable: {type(e).__name__}"
-        d["shape"] = [int(edf.shape[0]), int(edf.shape[1])]
-        dt = "_dtime" if "_dtime" in edf.columns else None
-        groups = {}
-        try:
-            if "_order_date_parsed" in edf.columns:
-                s = pd.to_datetime(edf["_order_date_parsed"], errors="coerce").dt.date.value_counts()
-                groups["orders_over_time"] = int(len(s))
-            if "_hour" in edf.columns and dt:
-                groups["time_by_hour"] = int(edf.dropna(subset=["_hour"]).groupby("_hour")[dt].mean().__len__())
-            groups["time_distribution_bins"] = 20
-            for key, col in [("by_weather", "_weather"), ("by_traffic", "_traffic"),
-                             ("by_vehicle", "_vehicle"), ("by_city", "_city")]:
-                if col in edf.columns:
-                    groups[key] = int(edf[col].fillna("Unknown").nunique())
-        except Exception as e:
-            groups["groups_error"] = f"{type(e).__name__}: {e}"
-        d["groups"] = groups
-        d["dtypes"] = {c: str(t) for c, t in edf.dtypes.items()}
-    except Exception as e:
-        d["diag_error"] = f"{type(e).__name__}: {e}"
-    return d
 
 
 boot()
@@ -201,18 +115,6 @@ def safe(fn):
     except Exception as e:
         print(f"[API ERROR] {type(e).__name__}: {e}", flush=True)
         app.logger.exception("[API ERROR] traceback (server-side only)")
-        _tmp = getattr(e, "_ov_tmp_diag", None)
-        if _tmp is not None:
-            # TEMPORARY-DIAG: shapes + failing frame location only (no source,
-            # no values, no traceback text) so the production failure can be
-            # pinpointed remotely. Remove after fix.
-            try:
-                _frames = traceback.extract_tb(e.__traceback__)
-                _tmp["tb_frames"] = [{"file": f.filename, "line": f.lineno, "func": f.name}
-                                     for f in _frames[-4:]]
-            except Exception:
-                pass
-            return jsonify({"error": str(e), "diag": _tmp}), 500
         return jsonify({"error": str(e)}), 500
 
 # ---------------------------------------------------------------- health/meta
@@ -227,7 +129,6 @@ def health():
                     "dataset_loaded": df is not None,
                     "load_error": STATE.get("load_error"),
                     "build": build_fingerprint(),
-                    "diag": STATE.get("diag"),
                     "mysql": {"available": ok, "detail": msg},
                     "demo_mode": STATE["demo_mode"]})
 
@@ -277,8 +178,7 @@ def overview():
             print("[OVERVIEW] calculating KPIs", flush=True)
             kpis = overview_stats(df)
             print("[OVERVIEW] KPIs complete", flush=True)
-        except Exception as _ke:
-            _ke._ov_tmp_diag = {"stage": "KPIs"}  # TEMPORARY-DIAG
+        except Exception:
             app.logger.exception("[OVERVIEW] failed at stage: KPIs")
             raise
         try:
@@ -287,36 +187,14 @@ def overview():
             for _ck, _cs in charts.items():
                 print(f"[OVERVIEW DEBUG] {_ck}: rows={len(_cs)}", flush=True)
             print("[OVERVIEW] charts complete", flush=True)
-        except Exception as _ce:
-            # TEMPORARY-DIAG: capture request-time input shapes (remove after fix)
-            try:
-                from analytics.overview import _pick as _ov_pick
-                _dt = _ov_pick(df, "_dtime", "Time_taken (min)")
-                _sel = df[_dt] if isinstance(_dt, str) and _dt in df.columns else None
-                _diag = {"stage": "charts", "dt": repr(_dt),
-                         "sel_type": type(_sel).__name__,
-                         "sel_shape": list(getattr(_sel, "shape", []) or []),
-                         "sel_dtype": str(getattr(_sel, "dtype", "")),
-                         "dropna_shape": list(getattr(_sel.dropna(), "shape", []) or []) if _sel is not None else None,
-                         "sel_min": (float(_sel.min()) if _sel is not None else None),
-                         "sel_max": (float(_sel.max()) if _sel is not None else None),
-                         "sel_mean": (float(_sel.mean()) if _sel is not None else None),
-                         "sel_nunique": (int(_sel.nunique()) if _sel is not None else None),
-                         "df_shape": list(df.shape),
-                         "cols_unique": bool(df.columns.is_unique),
-                         "numpy": np.__version__}
-            except Exception as _de:
-                _diag = {"stage": "charts", "diag_error": f"{type(_de).__name__}: {_de}"}
-            print(f"[OVERVIEW DIAG] {_diag}", flush=True)
-            _ce._ov_tmp_diag = _diag
+        except Exception:
             app.logger.exception("[OVERVIEW] failed at stage: charts")
             raise
         try:
             print("[OVERVIEW] calculating insights", flush=True)
             insights = live_insights(df)
             print("[OVERVIEW] insights complete", flush=True)
-        except Exception as _ie:
-            _ie._ov_tmp_diag = {"stage": "insights"}  # TEMPORARY-DIAG
+        except Exception:
             app.logger.exception("[OVERVIEW] failed at stage: insights")
             raise
         payload = {"kpis": kpis, "charts": charts,
@@ -326,7 +204,6 @@ def overview():
             _json.dumps(payload, allow_nan=False)
         except Exception as je:
             print(f"[OVERVIEW ERROR] response not strictly JSON-serializable: {je}", flush=True)
-            je._ov_tmp_diag = {"stage": "serialization"}  # TEMPORARY-DIAG
             app.logger.exception("[OVERVIEW] failed at stage: serialization")
             raise
         print("[OVERVIEW] response ready", flush=True)
