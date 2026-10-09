@@ -26,8 +26,7 @@ function fetchErrorText(e){
  if(e&&(e.name==='AbortError'||/abort/i.test(e.message||'')))return 'Request timed out. The sample preview is retained — please retry.';
  const st=e&&e.status,body=(e&&e.body)||{};
  if(st===429){const s=body.retry_after_seconds!=null?` Please wait about ${body.retry_after_seconds}s and retry.`:' Please wait about a minute and retry.';return 'Too many requests.'+s+' The sample preview is retained.';}
- const reason=body.reason||(e&&e.message)||'request failed';
- return `Live fetch failed (${reason}). The sample preview is retained — please retry.`;
+ return 'Live data is temporarily unavailable. Showing sample preview only.';
 }
 function initLive(){
  if(liveInit)return;liveInit=true;

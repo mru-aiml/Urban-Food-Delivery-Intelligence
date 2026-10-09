@@ -15,7 +15,11 @@ Verified status (Oct 2026):
 Rules enforced here: secrets only from env (Overpass needs none), hard
 timeouts, bounded response sizes, fixed area allowlist (no arbitrary
 queries), validation of every field, per-area rate limiting + cache with
-freshness metadata. Failures return honest errors; nothing is fabricated.
+freshness metadata. Per-mirror attempts are logged server-side with HTTP
+status and a short sanitized body snippet; transient failures (timeouts,
+resets, HTTP 5xx) get one bounded retry with backoff, while HTTP 429,
+refusals and invalid data never retry, and a failing mirror cools down
+before it is tried again. Failures return honest errors; nothing is fabricated.
 """
 import json
 import os
@@ -44,6 +48,18 @@ AREAS = {
 }
 CACHE_TTL_SECONDS = 15 * 60
 MIN_UPSTREAM_INTERVAL_SECONDS = 45
+RETRY_BACKOFF_SECONDS = 2
+MAX_ATTEMPTS_PER_MIRROR = 2  # 1 initial try + 1 retry (transient failures only)
+MIRROR_COOLDOWN_SECONDS = 180  # skip a mirror that failed recently
+_mirror_cooldown = {}  # url -> epoch of last failure
+
+
+class ProviderRateLimited(Exception):
+    """All mirrors answered HTTP 429: slow down, do not retry immediately."""
+
+    def __init__(self, msg, retry_after=None):
+        super().__init__(msg)
+        self.retry_after = retry_after
 
 
 class _IPv4HTTPSConnection(http.client.HTTPSConnection):
@@ -153,30 +169,132 @@ def _normalize(elements):
 @register("osm_overpass")
 def _fetch_overpass(_cfg, area):
     """Real HTTP fetch, trying public mirrors in order. Raises with reasons."""
+    now = time.time()
     if area not in AREAS:
         raise ValueError(f"Unknown area {area!r}.")
     body = urllib.parse.urlencode(
         {"data": _overpass_query(AREAS[area]["bbox"])}).encode("utf-8")
-    errors = []
+    attempts = []
+    rate_limited = []
     for url in OVERPASS_URLS:
-        req = urllib.request.Request(
-            url, data=body,
-            headers={"User-Agent": USER_AGENT,
-                     "Content-Type": "application/x-www-form-urlencoded"})
-        try:
-            status, raw = _http_open(req, REQUEST_TIMEOUT_SECONDS)
-        except Exception as e:
-            errors.append(f"{url}: {type(e).__name__}: {e}")
+        host = urllib.parse.urlparse(url).hostname or url
+        if now - _mirror_cooldown.get(url, 0) < MIRROR_COOLDOWN_SECONDS:
+            attempts.append({"mirror": host, "outcome": "skipped: cooling down"})
             continue
-        if status != 200:
-            errors.append(f"{url}: HTTP {status}")
-            continue
-        try:
-            return _parse_overpass(raw, url, area)
-        except Exception as e:
-            errors.append(f"{url}: {type(e).__name__}: {e}")
-            continue
-    raise ConnectionError("All Overpass mirrors failed (" + " | ".join(errors) + ").")
+        outcome, failed_at = None, now
+        for attempt in range(1, MAX_ATTEMPTS_PER_MIRROR + 1):
+            req = urllib.request.Request(
+                url, data=body,
+                headers={"User-Agent": USER_AGENT,
+                         "Content-Type": "application/x-www-form-urlencoded"})
+            try:
+                status, raw = _http_open(req, REQUEST_TIMEOUT_SECONDS)
+            except urllib.error.HTTPError as e:
+                snippet = ""
+                try:
+                    snippet = _snippet(e.read(2048))
+                except Exception:
+                    pass
+                if e.code == 429:
+                    rate_limited.append(_parse_retry_after(
+                        getattr(e, "headers", None)) or 60)
+                    outcome = "http_429 rate-limited (no retry)"
+                    _log_attempt(host, attempt, status=429, err="HTTPError 429",
+                                 snippet=snippet)
+                    break
+                if 500 <= e.code < 600 and attempt < MAX_ATTEMPTS_PER_MIRROR:
+                    _log_attempt(host, attempt, status=e.code,
+                                 err=f"HTTPError {e.code}, retrying",
+                                 snippet=snippet)
+                    time.sleep(RETRY_BACKOFF_SECONDS)
+                    continue
+                outcome = f"http_{e.code}"
+                _log_attempt(host, attempt, status=e.code,
+                             err=f"HTTPError {e.code}", snippet=snippet)
+                break
+            except Exception as e:
+                outcome = f"{type(e).__name__}: {str(e)[:100]}"
+                _log_attempt(host, attempt, err=f"{type(e).__name__}: {e}")
+                if _is_transient(e) and attempt < MAX_ATTEMPTS_PER_MIRROR:
+                    time.sleep(RETRY_BACKOFF_SECONDS)
+                    outcome = None
+                    continue
+                break
+            _log_attempt(host, attempt, status=status, nbytes=len(raw))
+            if status == 429:
+                rate_limited.append(60)
+                outcome = "http_429 rate-limited (no retry)"
+                break
+            if status != 200:
+                outcome = f"http_{status}"
+                break
+            try:
+                payload = _parse_overpass(raw, url, area)
+            except Exception as e:
+                outcome = f"invalid_response: {type(e).__name__}"
+                _log_attempt(host, attempt, status=status,
+                             err=f"{type(e).__name__}: {e}")
+                break
+            _mirror_cooldown.pop(url, None)
+            return payload
+        attempts.append({"mirror": host, "outcome": outcome or "failed"})
+        _mirror_cooldown[url] = failed_at
+    tried = [a for a in attempts if "cooling down" not in (a.get("outcome") or "")]
+    if rate_limited and tried and all(
+            (a.get("outcome") or "").startswith("http_429") for a in tried):
+        err = ProviderRateLimited(
+            "Overpass rate limit reached on all mirrors. Please retry shortly.",
+            max(rate_limited))
+        err._attempts = attempts
+        raise err
+    if not tried:
+        err = ConnectionError("All Overpass mirrors are cooling down after recent "
+                              "failures. Please retry shortly.")
+        err._attempts = attempts
+        raise err
+    err = ConnectionError("All Overpass mirrors failed ("
+                          + " | ".join(f"{a['mirror']}: {a['outcome']}" for a in tried)
+                          + ").")
+    err._attempts = attempts
+    raise err
+
+
+def _is_transient(exc):
+    """Retry only transient network failures (never 429/refusals/bad data)."""
+    import http.client as _hc
+    return isinstance(exc, (TimeoutError, socket.timeout,
+                            ConnectionResetError, BrokenPipeError,
+                            _hc.RemoteDisconnected, _hc.IncompleteRead))
+
+
+def _parse_retry_after(headers):
+    try:
+        if headers is None or not hasattr(headers, "get"):
+            return None
+        for key in ("Retry-After", "retry-after"):
+            v = headers.get(key)
+            if v is not None:
+                return int(str(v).strip().split(",")[0])
+    except Exception:
+        pass
+    return None
+
+
+def _snippet(raw):
+    try:
+        txt = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
+    except Exception:
+        return ""
+    return "".join(ch if 32 <= ord(ch) < 127 else " " for ch in txt[:200]).strip()[:200]
+
+
+def _log_attempt(host, attempt, status=None, nbytes=None, err=None, snippet=None):
+    if err is None:
+        print(f"[LIVE] {host} attempt {attempt} -> HTTP {status} ({nbytes} B)", flush=True)
+    elif snippet:
+        print(f"[LIVE] {host} attempt {attempt} FAILED {err} | body: {snippet}", flush=True)
+    else:
+        print(f"[LIVE] {host} attempt {attempt} FAILED {err}", flush=True)
 
 
 def _parse_overpass(raw, url, area):
@@ -246,10 +364,16 @@ def fetch_live(area=None, _now=None):
     _last_attempt[area] = now
     try:
         payload = fn({}, area)
+    except ProviderRateLimited as e:
+        return {**base, "available": False, "area": area,
+                "reason": f"Provider rate limit: {e} Historical analytics are unaffected.",
+                "retry_after_seconds": int(e.retry_after or 60),
+                "attempts": list(getattr(e, "_attempts", []))}, 429
     except Exception as e:
         return {**base, "available": False, "area": area,
                 "reason": f"Live fetch failed ({type(e).__name__}: {e}). "
-                          "Historical analytics are unaffected."}, 502
+                          "Historical analytics are unaffected.",
+                "attempts": list(getattr(e, "_attempts", []))}, 502
     _cache[area] = {"payload": payload, "at": now}
     out = dict(base)
     out.update(payload)

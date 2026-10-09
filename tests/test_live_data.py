@@ -16,6 +16,7 @@ from integrations import live_data_provider as lp
 def _reset():
     lp._cache.clear()
     lp._last_attempt.clear()
+    lp._mirror_cooldown.clear()
 
 
 _GOOD = {"elements": [
@@ -59,11 +60,14 @@ def test_fetch_malformed_json(monkeypatch):
     _patch_http(monkeypatch, b"<html>not json</html>")
     out, status = lp.fetch_live("bengaluru-mg-road", _now=1000.0)
     assert status == 502 and out["available"] is False
-    assert out.get("records") is None and "invalid JSON" in out["reason"]
+    assert out.get("records") is None
+    assert isinstance(out.get("attempts"), list) and len(out["attempts"]) == 2
+    assert all("invalid_response" in a["outcome"] for a in out["attempts"])
 
 
 def test_fetch_timeout(monkeypatch):
     _reset()
+    monkeypatch.setattr(lp, "RETRY_BACKOFF_SECONDS", 0)
     _patch_http(monkeypatch, exc=TimeoutError("timed out"))
     out, status = lp.fetch_live("bengaluru-mg-road", _now=1000.0)
     assert status == 502 and out["available"] is False
@@ -74,7 +78,67 @@ def test_fetch_provider_rate_limit(monkeypatch):
     err = urllib.error.HTTPError("http://x", 429, "Too Many Requests", {}, io.BytesIO(b""))
     _patch_http(monkeypatch, exc=err)
     out, status = lp.fetch_live("bengaluru-mg-road", _now=1000.0)
-    assert status == 502 and "429" in out["reason"]
+    assert status == 429 and out["available"] is False
+    assert out["retry_after_seconds"] == 60
+
+
+def test_fetch_retry_after_header(monkeypatch):
+    _reset()
+    err = urllib.error.HTTPError("http://x", 429, "Too Many Requests",
+                                 {"Retry-After": "120"}, io.BytesIO(b""))
+    _patch_http(monkeypatch, exc=err)
+    out, status = lp.fetch_live("bengaluru-mg-road", _now=1000.0)
+    assert status == 429 and out["retry_after_seconds"] == 120
+
+
+def test_retry_transient_500_then_success(monkeypatch):
+    _reset()
+    monkeypatch.setattr(lp, "RETRY_BACKOFF_SECONDS", 0)
+    calls = []
+    err = urllib.error.HTTPError("http://x", 500, "Internal Error", {}, io.BytesIO(b"e"))
+
+    def fake(req, timeout=None):
+        calls.append(1)
+        if len(calls) == 1:
+            raise err
+        return 200, json.dumps(_GOOD).encode()
+
+    monkeypatch.setattr(lp, "_http_open", fake)
+    out, status = lp.fetch_live("bengaluru-mg-road", _now=1000.0)
+    assert status == 200 and out["available"] is True and len(calls) == 2
+    assert out["record_count"] == 2
+
+
+def test_no_retry_on_invalid_response(monkeypatch):
+    _reset()
+    calls = []
+
+    def fake(req, timeout=None):
+        calls.append(1)
+        return 200, b"<html>not json</html>"
+
+    monkeypatch.setattr(lp, "_http_open", fake)
+    out, status = lp.fetch_live("bengaluru-mg-road", _now=1000.0)
+    assert status == 502
+    assert len(calls) == len(lp.OVERPASS_URLS)  # once per mirror, no retries
+
+
+def test_mirror_cooldown_skips_failing_mirrors(monkeypatch):
+    _reset()
+    calls = []
+
+    def fake(req, timeout=None):
+        calls.append(1)
+        return 200, json.dumps(_GOOD).encode()
+
+    monkeypatch.setattr(lp, "_http_open", fake)
+    import time as _time
+    for url in lp.OVERPASS_URLS:
+        lp._mirror_cooldown[url] = _time.time()
+    out, status = lp.fetch_live("bengaluru-mg-road", _now=1100.0)
+    assert status == 502 and len(calls) == 0
+    assert "cooling down" in out["reason"]
+    assert all("cooling down" in a["outcome"] for a in out["attempts"])
 
 
 def test_request_rate_limit(monkeypatch):
