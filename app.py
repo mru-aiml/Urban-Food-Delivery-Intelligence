@@ -64,9 +64,23 @@ def build_fingerprint():
         ovmod = os.path.abspath(getattr(_ov, "__file__", "unknown"))
     except Exception as e:
         ovmod = f"import-failed: {type(e).__name__}: {e}"
+    try:
+        import hashlib as _hl
+        with open(os.path.abspath(__file__), "rb") as _fh:
+            app_sha = _hl.sha256(_fh.read()).hexdigest()[:16]
+    except Exception:
+        app_sha = "unknown"
+    try:
+        import hashlib as _hl2
+        _ovp = ovmod if ovmod.endswith(".py") else ovmod.replace(".pyc", ".py")
+        with open(_ovp, "rb") as _fh:
+            ov_sha = _hl2.sha256(_fh.read()).hexdigest()[:16]
+    except Exception:
+        ov_sha = "unknown"
     return {"commit": (sha[:12] if sha != "unknown" else "unknown"),
             "python": pyv, "numpy": npv, "pandas": pdv,
-            "app_file": os.path.abspath(__file__), "overview_module": ovmod}
+            "app_file": os.path.abspath(__file__), "overview_module": ovmod,
+            "app_sha256_16": app_sha, "overview_sha256_16": ov_sha}
 
 # ---------------------------------------------------------------- state
 STATE = {"raw": None, "clean": None, "df": None, "raw_profile": None,
