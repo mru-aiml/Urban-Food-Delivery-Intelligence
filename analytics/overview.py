@@ -144,7 +144,20 @@ def overview_charts(df, max_points=60):
                          ("avg_time_by_vehicle", "_vehicle"), ("avg_time_by_city", "_city")]:
             if col in df.columns:
                 out[key] = _group_avg(df, col, dt)
+    _assert_charts_aligned(out)
     return out
+
+
+def _assert_charts_aligned(charts):
+    """Structural guarantee: every chart series is a list of {label, value} pairs
+    derived from a single shared grouping, so labels and values can never
+    diverge in length. Fails loudly (server-side) instead of sending bad data."""
+    for key, series in charts.items():
+        if not isinstance(series, list):
+            raise ValueError(f"overview chart {key!r} is not a list")
+        for i, row in enumerate(series):
+            if not isinstance(row, dict) or "label" not in row or "value" not in row:
+                raise ValueError(f"overview chart {key!r} row {i} is malformed: {row!r}")
 
 
 def live_insights(df):
