@@ -197,7 +197,15 @@ def safe(fn):
         app.logger.exception("[API ERROR] traceback (server-side only)")
         _tmp = getattr(e, "_ov_tmp_diag", None)
         if _tmp is not None:
-            # TEMPORARY-DIAG: shapes only, no traceback (remove after fix)
+            # TEMPORARY-DIAG: shapes + failing frame location only (no source,
+            # no values, no traceback text) so the production failure can be
+            # pinpointed remotely. Remove after fix.
+            try:
+                _frames = traceback.extract_tb(e.__traceback__)
+                _tmp["tb_frames"] = [{"file": f.filename, "line": f.lineno, "func": f.name}
+                                     for f in _frames[-4:]]
+            except Exception:
+                pass
             return jsonify({"error": str(e), "diag": _tmp}), 500
         return jsonify({"error": str(e)}), 500
 
@@ -263,7 +271,8 @@ def overview():
             print("[OVERVIEW] calculating KPIs", flush=True)
             kpis = overview_stats(df)
             print("[OVERVIEW] KPIs complete", flush=True)
-        except Exception:
+        except Exception as _ke:
+            _ke._ov_tmp_diag = {"stage": "KPIs"}  # TEMPORARY-DIAG
             app.logger.exception("[OVERVIEW] failed at stage: KPIs")
             raise
         try:
@@ -296,7 +305,8 @@ def overview():
             print("[OVERVIEW] calculating insights", flush=True)
             insights = live_insights(df)
             print("[OVERVIEW] insights complete", flush=True)
-        except Exception:
+        except Exception as _ie:
+            _ie._ov_tmp_diag = {"stage": "insights"}  # TEMPORARY-DIAG
             app.logger.exception("[OVERVIEW] failed at stage: insights")
             raise
         payload = {"kpis": kpis, "charts": charts,
@@ -306,6 +316,7 @@ def overview():
             _json.dumps(payload, allow_nan=False)
         except Exception as je:
             print(f"[OVERVIEW ERROR] response not strictly JSON-serializable: {je}", flush=True)
+            je._ov_tmp_diag = {"stage": "serialization"}  # TEMPORARY-DIAG
             app.logger.exception("[OVERVIEW] failed at stage: serialization")
             raise
         print("[OVERVIEW] response ready", flush=True)
