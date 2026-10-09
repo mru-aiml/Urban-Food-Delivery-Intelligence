@@ -25,7 +25,10 @@ import socket
 import urllib.parse
 import urllib.request
 
-OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+OVERPASS_URLS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+]
 USER_AGENT = "UrbanFoodDeliveryIntelligence/1.0 (educational DWM project)"
 REQUEST_TIMEOUT_SECONDS = 25
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024
@@ -149,22 +152,34 @@ def _normalize(elements):
 
 @register("osm_overpass")
 def _fetch_overpass(_cfg, area):
-    """Real HTTP fetch. Returns payload dict or raises with a clear error."""
+    """Real HTTP fetch, trying public mirrors in order. Raises with reasons."""
     if area not in AREAS:
         raise ValueError(f"Unknown area {area!r}.")
     body = urllib.parse.urlencode(
         {"data": _overpass_query(AREAS[area]["bbox"])}).encode("utf-8")
-    req = urllib.request.Request(
-        OVERPASS_URL, data=body,
-        headers={"User-Agent": USER_AGENT,
-                 "Content-Type": "application/x-www-form-urlencoded"})
-    try:
-        status, raw = _http_open(req, REQUEST_TIMEOUT_SECONDS)
-    except Exception as e:
-        raise ConnectionError(
-            f"Overpass request failed ({type(e).__name__}: {e}).") from e
-    if status != 200:
-        raise ConnectionError(f"Overpass returned HTTP {status}.")
+    errors = []
+    for url in OVERPASS_URLS:
+        req = urllib.request.Request(
+            url, data=body,
+            headers={"User-Agent": USER_AGENT,
+                     "Content-Type": "application/x-www-form-urlencoded"})
+        try:
+            status, raw = _http_open(req, REQUEST_TIMEOUT_SECONDS)
+        except Exception as e:
+            errors.append(f"{url}: {type(e).__name__}: {e}")
+            continue
+        if status != 200:
+            errors.append(f"{url}: HTTP {status}")
+            continue
+        try:
+            return _parse_overpass(raw, url, area)
+        except Exception as e:
+            errors.append(f"{url}: {type(e).__name__}: {e}")
+            continue
+    raise ConnectionError("All Overpass mirrors failed (" + " | ".join(errors) + ").")
+
+
+def _parse_overpass(raw, url, area):
     if len(raw) > MAX_RESPONSE_BYTES:
         raise ValueError("Overpass response exceeded size limit.")
     try:
@@ -178,6 +193,7 @@ def _fetch_overpass(_cfg, area):
     return {"provider": "osm_overpass",
             "data_type": "live restaurant listings (OpenStreetMap) — not delivery orders",
             "source": "OpenStreetMap Overpass API",
+            "mirror": url,
             "area": area, "area_label": AREAS[area]["label"],
             "records": records, "record_count": len(records),
             "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(now))}
