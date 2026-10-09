@@ -25,7 +25,7 @@ CACHE_PATH = os.path.join(config.MODELS_DIR, "comparison_cache.json")
 _MEM = {}
 _SEED = int(getattr(config, "RANDOM_STATE", 42))
 # Bump when experiment code/config changes so stale cached results are not reused.
-CODE_VERSION = 2
+CODE_VERSION = 3
 
 
 def _key(base):
@@ -103,7 +103,7 @@ def compare_classification(df):
     from sklearn.preprocessing import StandardScaler
     from sklearn.linear_model import LogisticRegression
     from sklearn.tree import DecisionTreeClassifier
-    from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+    from sklearn.ensemble import RandomForestClassifier, HistGradientBoostingClassifier
     from sklearn.metrics import (accuracy_score, precision_score, recall_score,
                                  f1_score, roc_auc_score, confusion_matrix)
     X, y, cols, err = _build_xy(df)
@@ -121,13 +121,13 @@ def compare_classification(df):
          {"solver": "lbfgs", "max_iter": 1000, "scaled": True}),
         ("Decision Tree", DecisionTreeClassifier(random_state=_SEED),
          {"max_depth": None}),
-        ("Random Forest", RandomForestClassifier(n_estimators=100, random_state=_SEED, n_jobs=-1),
-         {"n_estimators": 100}),
-        # 50 trees + row subsampling: full 100-tree GB exceeds the free-tier
-        # worker memory on Render; config reported honestly below.
-        ("Gradient Boosting", GradientBoostingClassifier(n_estimators=50, subsample=0.8,
-                                                         random_state=_SEED),
-         {"n_estimators": 50, "subsample": 0.8}),
+        ("Random Forest", RandomForestClassifier(n_estimators=100, random_state=_SEED, n_jobs=2),
+         {"n_estimators": 100, "n_jobs": 2}),
+        # HistGradientBoosting (binned, early-stopping): same gradient-boosting
+        # family, far leaner than exact greedy GB, which exceeds free-tier
+        # worker memory on Render. Exact class reported honestly.
+        ("Gradient Boosting", HistGradientBoostingClassifier(random_state=_SEED),
+         {"class": "HistGradientBoostingClassifier", "early_stopping": True}),
     ]
     models = []
     for name, clf, params in cands:
