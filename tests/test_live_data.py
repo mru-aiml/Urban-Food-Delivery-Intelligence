@@ -18,20 +18,6 @@ def _reset():
     lp._last_attempt.clear()
 
 
-class _Resp:
-    def __init__(self, body):
-        self._body = body
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *a):
-        return False
-
-    def read(self, n=-1):
-        return self._body if n is None or n < 0 else self._body[:n]
-
-
 _GOOD = {"elements": [
     {"type": "node", "id": 1, "lat": 12.97, "lon": 77.60,
      "tags": {"amenity": "restaurant", "name": "Koshy's", "cuisine": "indian"}},
@@ -41,17 +27,17 @@ _GOOD = {"elements": [
 ]}
 
 
-def _patch_urlopen(monkeypatch, body=None, exc=None):
+def _patch_http(monkeypatch, body=None, exc=None, status=200):
     def fake(req, timeout=None):
         if exc is not None:
             raise exc
-        return _Resp(body)
-    monkeypatch.setattr("urllib.request.urlopen", fake)
+        return status, body
+    monkeypatch.setattr(lp, "_http_open", fake)
 
 
 def test_fetch_success_normalizes(monkeypatch):
     _reset()
-    _patch_urlopen(monkeypatch, json.dumps(_GOOD).encode())
+    _patch_http(monkeypatch, json.dumps(_GOOD).encode())
     out, status = lp.fetch_live("bengaluru-mg-road", _now=1000.0)
     assert status == 200 and out["available"] is True
     assert out["record_count"] == 2 and len(out["records"]) == 2
@@ -63,14 +49,14 @@ def test_fetch_success_normalizes(monkeypatch):
 
 def test_fetch_empty_elements_is_honest(monkeypatch):
     _reset()
-    _patch_urlopen(monkeypatch, json.dumps({"elements": []}).encode())
+    _patch_http(monkeypatch, json.dumps({"elements": []}).encode())
     out, status = lp.fetch_live("bengaluru-mg-road", _now=1000.0)
     assert status == 200 and out["records"] == [] and out["record_count"] == 0
 
 
 def test_fetch_malformed_json(monkeypatch):
     _reset()
-    _patch_urlopen(monkeypatch, b"<html>not json</html>")
+    _patch_http(monkeypatch, b"<html>not json</html>")
     out, status = lp.fetch_live("bengaluru-mg-road", _now=1000.0)
     assert status == 502 and out["available"] is False
     assert out.get("records") is None and "invalid JSON" in out["reason"]
@@ -78,7 +64,7 @@ def test_fetch_malformed_json(monkeypatch):
 
 def test_fetch_timeout(monkeypatch):
     _reset()
-    _patch_urlopen(monkeypatch, exc=TimeoutError("timed out"))
+    _patch_http(monkeypatch, exc=TimeoutError("timed out"))
     out, status = lp.fetch_live("bengaluru-mg-road", _now=1000.0)
     assert status == 502 and out["available"] is False
 
@@ -86,22 +72,20 @@ def test_fetch_timeout(monkeypatch):
 def test_fetch_provider_rate_limit(monkeypatch):
     _reset()
     err = urllib.error.HTTPError("http://x", 429, "Too Many Requests", {}, io.BytesIO(b""))
-    _patch_urlopen(monkeypatch, exc=err)
+    _patch_http(monkeypatch, exc=err)
     out, status = lp.fetch_live("bengaluru-mg-road", _now=1000.0)
     assert status == 502 and "429" in out["reason"]
 
 
-def test_request_rate_limit():
+def test_request_rate_limit(monkeypatch):
     _reset()
-    import urllib.request as _u
-    real = _u.urlopen
     calls = []
 
     def fake(req, timeout=None):
         calls.append(1)
-        return _Resp(json.dumps(_GOOD).encode())
+        return 200, json.dumps(_GOOD).encode()
 
-    _u.urlopen = fake
+    monkeypatch.setattr(lp, "_http_open", fake)
     try:
         out1, s1 = lp.fetch_live("bengaluru-mg-road", _now=1000.0)
         assert s1 == 200 and len(calls) == 1
@@ -112,8 +96,12 @@ def test_request_rate_limit():
         out3, s3 = lp.fetch_live("bengaluru-mg-road", _now=1002.0)
         assert s3 == 429 and out3["retry_after_seconds"] > 0 and len(calls) == 1
     finally:
-        _u.urlopen = real
         _reset()
+
+
+def test_ipv4_connection_uses_hostname_for_tls():
+    import http.client
+    assert issubclass(lp._IPv4HTTPSConnection, http.client.HTTPSConnection)
 
 
 def test_unknown_area_rejected():
@@ -131,7 +119,7 @@ def test_post_unknown_area_is_400():
 
 def test_post_success_end_to_end_mocked(monkeypatch):
     _reset()
-    _patch_urlopen(monkeypatch, json.dumps(_GOOD).encode())
+    _patch_http(monkeypatch, json.dumps(_GOOD).encode())
     c = A.app.test_client()
     r = c.post("/api/live-fetch", json={"area": "mumbai-andheri-west"})
     assert r.status_code == 200

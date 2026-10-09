@@ -20,6 +20,8 @@ freshness metadata. Failures return honest errors; nothing is fabricated.
 import json
 import os
 import time
+import http.client
+import socket
 import urllib.parse
 import urllib.request
 
@@ -39,6 +41,55 @@ AREAS = {
 }
 CACHE_TTL_SECONDS = 15 * 60
 MIN_UPSTREAM_INTERVAL_SECONDS = 45
+
+
+class _IPv4HTTPSConnection(http.client.HTTPSConnection):
+    """HTTPS that connects over IPv4 even when DNS prefers IPv6.
+
+    Some containers resolve AAAA first but have no IPv6 route (ENETUNREACH);
+    urllib tries only the first address. This resolves AF_INET explicitly
+    while keeping SNI/certificate verification on the real hostname.
+    """
+
+    def connect(self):
+        if getattr(self, "_tunnel_host", None):
+            return super().connect()
+        try:
+            addrs = socket.getaddrinfo(self.host, self.port,
+                                       socket.AF_INET, socket.SOCK_STREAM)
+        except socket.gaierror as e:
+            raise OSError(f"No IPv4 address for {self.host}: {e}") from e
+        if not addrs:
+            raise OSError(f"No IPv4 address for {self.host}")
+        err = None
+        for _fam, _typ, _proto, _canon, sockaddr in addrs:
+            try:
+                self.sock = socket.create_connection(
+                    sockaddr, timeout=self.timeout,
+                    source_address=getattr(self, "source_address", None))
+                self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                err = None
+                break
+            except OSError as e:
+                err = e
+        if err is not None:
+            raise err
+        server_hostname = getattr(self, "server_hostname", None) or self.host
+        self.sock = self._context.wrap_socket(self.sock, server_hostname=server_hostname)
+
+
+class _IPv4HTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_IPv4HTTPSConnection, req)
+
+
+_opener = urllib.request.build_opener(_IPv4HTTPSHandler)
+
+
+def _http_open(req, timeout):
+    """Single indirection for HTTP(S) fetches (patchable in tests)."""
+    with _opener.open(req, timeout=timeout) as resp:
+        return resp.status, resp.read(MAX_RESPONSE_BYTES + 1)
 
 PROVIDERS = {}
 _cache = {}       # area -> {"payload": ..., "at": epoch}
@@ -63,7 +114,7 @@ def _overpass_query(bbox):
     s, w, n, e = bbox
     return ('[out:json][timeout:25];'
             'node["amenity"~"^(restaurant|fast_food)$"]'
-            f"({s},{w},{n},{e});out body;")
+            f"({s},{w},{n},{e});out body {MAX_RECORDS};")
 
 
 def _normalize(elements):
@@ -108,11 +159,12 @@ def _fetch_overpass(_cfg, area):
         headers={"User-Agent": USER_AGENT,
                  "Content-Type": "application/x-www-form-urlencoded"})
     try:
-        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_SECONDS) as resp:
-            raw = resp.read(MAX_RESPONSE_BYTES + 1)
+        status, raw = _http_open(req, REQUEST_TIMEOUT_SECONDS)
     except Exception as e:
         raise ConnectionError(
             f"Overpass request failed ({type(e).__name__}: {e}).") from e
+    if status != 200:
+        raise ConnectionError(f"Overpass returned HTTP {status}.")
     if len(raw) > MAX_RESPONSE_BYTES:
         raise ValueError("Overpass response exceeded size limit.")
     try:
