@@ -121,7 +121,14 @@ def overview_charts(df, max_points=60):
         out["time_by_hour"] = []
     # distribution histogram
     if dt:
-        h, edges = np.histogram(df[dt].dropna(), bins=20)
+        # TEMPORARY-DIAG: log exact histogram input (remove after production fix)
+        _sel = df[dt]
+        _dn = _sel.dropna()
+        print(f"[OVERVIEW DEBUG] hist input: dt={dt!r} type={type(_sel).__name__} "
+              f"shape={getattr(_sel, 'shape', None)} dtype={getattr(_sel, 'dtype', '')} "
+              f"dropna_shape={getattr(_dn, 'shape', None)} "
+              f"cols_unique={bool(df.columns.is_unique)} numpy={np.__version__}", flush=True)
+        h, edges = np.histogram(_dn, bins=20)
         out["time_distribution"] = [{"label": f"{edges[i]:.0f}-{edges[i+1]:.0f}", "value": int(h[i])} for i in range(len(h))]
     else:
         out["time_distribution"] = []

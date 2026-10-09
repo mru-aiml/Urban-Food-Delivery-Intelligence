@@ -77,10 +77,19 @@ def build_fingerprint():
             ov_sha = _hl2.sha256(_fh.read()).hexdigest()[:16]
     except Exception:
         ov_sha = "unknown"
+    try:
+        import hashlib as _hl3
+        import numpy.lib._histograms_impl as _hh
+        _hhf = os.path.abspath(getattr(_hh, "__file__", ""))
+        with open(_hhf, "rb") as _fh:
+            np_hist_sha = _hl3.sha256(_fh.read()).hexdigest()[:16]
+    except Exception:
+        _hhf, np_hist_sha = "unknown", "unknown"
     return {"commit": (sha[:12] if sha != "unknown" else "unknown"),
             "python": pyv, "numpy": npv, "pandas": pdv,
             "app_file": os.path.abspath(__file__), "overview_module": ovmod,
-            "app_sha256_16": app_sha, "overview_sha256_16": ov_sha}
+            "app_sha256_16": app_sha, "overview_sha256_16": ov_sha,
+            "numpy_hist_file": _hhf, "numpy_hist_sha256_16": np_hist_sha}
 
 # ---------------------------------------------------------------- state
 STATE = {"raw": None, "clean": None, "df": None, "raw_profile": None,
@@ -171,6 +180,10 @@ def safe(fn):
     except Exception as e:
         print(f"[API ERROR] {type(e).__name__}: {e}", flush=True)
         app.logger.exception("[API ERROR] traceback (server-side only)")
+        _tmp = getattr(e, "_ov_tmp_diag", None)
+        if _tmp is not None:
+            # TEMPORARY-DIAG: shapes only, no traceback (remove after fix)
+            return jsonify({"error": str(e), "diag": _tmp}), 500
         return jsonify({"error": str(e)}), 500
 
 # ---------------------------------------------------------------- health/meta
@@ -244,7 +257,24 @@ def overview():
             for _ck, _cs in charts.items():
                 print(f"[OVERVIEW DEBUG] {_ck}: rows={len(_cs)}", flush=True)
             print("[OVERVIEW] charts complete", flush=True)
-        except Exception:
+        except Exception as _ce:
+            # TEMPORARY-DIAG: capture request-time input shapes (remove after fix)
+            try:
+                from analytics.overview import _pick as _ov_pick
+                _dt = _ov_pick(df, "_dtime", "Time_taken (min)")
+                _sel = df[_dt] if isinstance(_dt, str) and _dt in df.columns else None
+                _diag = {"stage": "charts", "dt": repr(_dt),
+                         "sel_type": type(_sel).__name__,
+                         "sel_shape": list(getattr(_sel, "shape", []) or []),
+                         "sel_dtype": str(getattr(_sel, "dtype", "")),
+                         "dropna_shape": list(getattr(_sel.dropna(), "shape", []) or []) if _sel is not None else None,
+                         "df_shape": list(df.shape),
+                         "cols_unique": bool(df.columns.is_unique),
+                         "numpy": np.__version__}
+            except Exception as _de:
+                _diag = {"stage": "charts", "diag_error": f"{type(_de).__name__}: {_de}"}
+            print(f"[OVERVIEW DIAG] {_diag}", flush=True)
+            _ce._ov_tmp_diag = _diag
             app.logger.exception("[OVERVIEW] failed at stage: charts")
             raise
         try:
