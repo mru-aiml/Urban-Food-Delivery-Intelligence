@@ -24,6 +24,8 @@ STATE = {"raw": None, "clean": None, "df": None, "raw_profile": None,
 def boot():
     print("[BOOT] starting dataset load ...", flush=True)
     try:
+        import pandas as _pd, numpy as _np, sys as _sys
+        print(f"[BOOT] env python={_sys.version.split()[0]} pandas={_pd.__version__} numpy={_np.__version__}", flush=True)
         from preprocessing.loader import load_raw
         from preprocessing.cleaner import clean, profile_raw
         from preprocessing.feature_engineering import engineer
@@ -120,10 +122,15 @@ def overview():
         print(f"[OVERVIEW] dataframe columns: {len(df.columns)}", flush=True)
         print("[OVERVIEW] calculating KPIs", flush=True)
         kpis = overview_stats(df)
+        print("[OVERVIEW] KPIs complete", flush=True)
         print("[OVERVIEW] calculating charts", flush=True)
         charts = overview_charts(df)
+        for _ck, _cs in charts.items():
+            print(f"[OVERVIEW DEBUG] {_ck}: rows={len(_cs)}", flush=True)
+        print("[OVERVIEW] charts complete", flush=True)
         print("[OVERVIEW] calculating insights", flush=True)
         insights = live_insights(df)
+        print("[OVERVIEW] insights complete", flush=True)
         payload = {"kpis": kpis, "charts": charts,
                    "insights": insights, "last_processed": STATE["last_processed"]}
         print("[OVERVIEW] serializing response", flush=True)
