@@ -175,6 +175,13 @@
     <div class="tabs" id="cmpTabs"><button data-t="classification" class="on">Classification</button><button data-t="clustering">Clustering</button><button data-t="association">Association Rules</button><button data-t="anomaly">Anomaly Detection</button></div>
     <div class="card"><div id="cmpNote" class="hint"></div><div id="cmpOut"></div><div class="chart-box"><canvas id="cmpChart"></canvas></div><div class="chart-box"><canvas id="cmpChart2"></canvas></div></div>
   </section>
+  <!-- LIVE -->
+  <section class="view" data-view="live">
+    <div class="page-head"><div><h1>Live Data</h1><p class="sub">Current restaurant listings — separate from historical delivery analytics.</p></div></div>
+    <div class="card"><div class="card-h">Live restaurant listings (OpenStreetMap) — not delivery orders</div>
+      <div class="row"><label>Area <select id="liveArea"></select></label><button class="btn primary" id="liveBtn">Fetch Live Data</button><span id="liveMeta" class="hint"></span></div>
+      <div id="liveStatus" class="hint"></div><div id="liveOut"></div></div>
+  </section>
 </main>
 </div>
 </div>
@@ -188,5 +195,6 @@
 <script src="/static/js/hotspots.js"></script>
 <script src="/static/js/warehouse.js"></script>
 <script src="/static/js/compare.js"></script>
+<script src="/static/js/live.js"></script>
 </body>
 </html>

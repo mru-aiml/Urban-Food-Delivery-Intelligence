@@ -605,6 +605,16 @@ def live_status():
         return jsonify(out)
     return safe(go)
 
+@app.post("/api/live-fetch")
+def live_fetch():
+    def go():
+        from integrations.live_data_provider import fetch_live
+        b = request.get_json(force=True, silent=True) or {}
+        area = b.get("area") or request.args.get("area")
+        payload, status = fetch_live(area)
+        return jsonify(payload), status
+    return safe(go)
+
 @app.post("/api/demo-mode")
 def demo():
     b = request.get_json(force=True, silent=True) or {}
