@@ -590,7 +590,19 @@ def recs():
 def live_status():
     def go():
         from integrations.live_data_provider import provider_status
-        return jsonify(provider_status(STATE["df"]))
+        out = provider_status(STATE["df"])
+        try:
+            from mining import model_comparison as mc
+            import json as _js
+            info = {"exists": os.path.exists(mc.CACHE_PATH), "size": 0, "keys": []}
+            if info["exists"]:
+                info["size"] = int(os.path.getsize(mc.CACHE_PATH))
+                with open(mc.CACHE_PATH, "r", encoding="utf-8") as _fh:
+                    info["keys"] = sorted((json.load(_fh).get("entries") or {}).keys())
+            out["comparison_cache"] = info
+        except Exception as e:
+            out["comparison_cache"] = {"error": f"{type(e).__name__}: {e}"}
+        return jsonify(out)
     return safe(go)
 
 @app.post("/api/demo-mode")
