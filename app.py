@@ -82,7 +82,7 @@ def boot():
         from preprocessing.loader import load_raw
         from preprocessing.cleaner import clean, profile_raw
         from preprocessing.feature_engineering import engineer
-        raw, _ = load_raw()
+        raw, raw_meta = load_raw()
         print(f"[BOOT] raw loaded: rows={len(raw)} cols={len(raw.columns)}", flush=True)
         STATE["raw_profile"] = profile_raw(raw)
         STATE["raw"] = raw
@@ -92,6 +92,8 @@ def boot():
         edf, fmeta = engineer(cdf)
         STATE["df"] = edf
         STATE["features_meta"] = fmeta
+        STATE["diag"] = _boot_data_diag(edf, (raw_meta or {}).get("source_path"))
+        print(f"[BOOT] diag: {STATE['diag']}", flush=True)
         STATE["last_processed"] = datetime.now().isoformat()
         print(f"[BOOT] OK rows={len(edf)} cols={len(edf.columns)}", flush=True)
         print(f"[BOOT] columns: {list(edf.columns)}", flush=True)
@@ -99,6 +101,46 @@ def boot():
         STATE["load_error"] = f"{type(e).__name__}: {e}"
         print(f"[BOOT] FAILED: {type(e).__name__}: {e}", flush=True)
         traceback.print_exc()
+
+
+def _boot_data_diag(edf, source_path):
+    """Non-sensitive boot-time data identity snapshot (never breaks boot).
+
+    Mirrors the exact groupings used by /api/overview so a production-only
+    shape mismatch can be compared remotely against local values.
+    """
+    d = {}
+    try:
+        import hashlib
+        try:
+            h = hashlib.md5()
+            with open(source_path, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1024 * 256), b""):
+                    h.update(chunk)
+            d["csv_md5"] = h.hexdigest()
+        except Exception as e:
+            d["csv_md5"] = f"unavailable: {type(e).__name__}"
+        d["shape"] = [int(edf.shape[0]), int(edf.shape[1])]
+        dt = "_dtime" if "_dtime" in edf.columns else None
+        groups = {}
+        try:
+            if "_order_date_parsed" in edf.columns:
+                s = pd.to_datetime(edf["_order_date_parsed"], errors="coerce").dt.date.value_counts()
+                groups["orders_over_time"] = int(len(s))
+            if "_hour" in edf.columns and dt:
+                groups["time_by_hour"] = int(edf.dropna(subset=["_hour"]).groupby("_hour")[dt].mean().__len__())
+            groups["time_distribution_bins"] = 20
+            for key, col in [("by_weather", "_weather"), ("by_traffic", "_traffic"),
+                             ("by_vehicle", "_vehicle"), ("by_city", "_city")]:
+                if col in edf.columns:
+                    groups[key] = int(edf[col].fillna("Unknown").nunique())
+        except Exception as e:
+            groups["groups_error"] = f"{type(e).__name__}: {e}"
+        d["groups"] = groups
+        d["dtypes"] = {c: str(t) for c, t in edf.dtypes.items()}
+    except Exception as e:
+        d["diag_error"] = f"{type(e).__name__}: {e}"
+    return d
 
 
 boot()
@@ -129,6 +171,7 @@ def health():
                     "dataset_loaded": df is not None,
                     "load_error": STATE.get("load_error"),
                     "build": build_fingerprint(),
+                    "diag": STATE.get("diag"),
                     "mysql": {"available": ok, "detail": msg},
                     "demo_mode": STATE["demo_mode"]})
 
