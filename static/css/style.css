@@ -40,3 +40,6 @@
 .recs{display:grid;gap:12px}.rec{border-left:5px solid var(--acc)}.kv{display:grid;grid-template-columns:110px 1fr;gap:6px;font-size:14px;margin-top:6px}
 .empty{color:var(--mut);padding:20px;text-align:center}.toast{position:fixed;bottom:18px;right:18px;background:var(--ink);color:#fff;padding:10px 16px;border-radius:10px;display:none;z-index:50}
 .about h3{margin:14px 0 6px}.about p,.about li{color:var(--mut);line-height:1.6}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--acc);border-radius:50%;animation:rot .7s linear infinite;vertical-align:-2px;margin-right:6px}
+@keyframes rot{to{transform:rotate(360deg)}}
+.btn:disabled{opacity:.55;cursor:wait;transform:none;box-shadow:none}
