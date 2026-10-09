@@ -87,6 +87,14 @@ def build_fingerprint():
         with open(_hhf, "r", encoding="utf-8", errors="replace") as _fh:
             _hlines = _fh.read().splitlines()
         np_hist_excerpt = "\n".join(f"{i + 1}:{l}" for i, l in enumerate(_hlines[805:905]))
+        # TEMPORARY-DIAG: upstream helpers region (ravel/outer-edges/bin-edges)
+        np_hist_excerpt2 = "\n".join(f"{i + 1}:{l}" for i, l in enumerate(_hlines[250:470]))
+        # TEMPORARY-DIAG: C-level bincount sanity probe (remove after fix)
+        _bc = np.bincount(np.array([0, 1, 2] * 5, dtype=np.intp), minlength=20)
+        np_bincount_probe = {"shape": list(_bc.shape), "sum": int(_bc.sum())}
+    except Exception as _be:
+        _hhf, np_hist_sha, np_hist_excerpt, np_hist_excerpt2 = "unknown", "unknown", "unavailable", "unavailable"
+        np_bincount_probe = {"error": f"{type(_be).__name__}: {_be}"}
     except Exception:
         _hhf, np_hist_sha, np_hist_excerpt = "unknown", "unknown", "unavailable"
     return {"commit": (sha[:12] if sha != "unknown" else "unknown"),
@@ -94,7 +102,9 @@ def build_fingerprint():
             "app_file": os.path.abspath(__file__), "overview_module": ovmod,
             "app_sha256_16": app_sha, "overview_sha256_16": ov_sha,
             "numpy_hist_file": _hhf, "numpy_hist_sha256_16": np_hist_sha,
-            "numpy_hist_excerpt_806_905": np_hist_excerpt}
+            "numpy_hist_excerpt_806_905": np_hist_excerpt,
+            "numpy_hist_excerpt_251_470": np_hist_excerpt2,
+            "numpy_bincount_probe": np_bincount_probe}
 
 # ---------------------------------------------------------------- state
 STATE = {"raw": None, "clean": None, "df": None, "raw_profile": None,
