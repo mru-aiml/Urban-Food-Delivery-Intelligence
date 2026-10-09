@@ -458,6 +458,24 @@ def anomalies():
         return jsonify(detect_anomalies(STATE["df"], limit=int(request.args.get("limit",60))))
     return safe(go)
 
+@app.get("/api/algorithm-comparison")
+def algorithm_comparison():
+    err = need_df()
+    if err: return err
+    def go():
+        from mining import model_comparison as mc
+        cat = (request.args.get("category") or "classification").strip().lower()
+        if cat == "classification":
+            return jsonify(mc.compare_classification(STATE["df"]))
+        if cat == "clustering":
+            return jsonify(mc.compare_clustering(STATE["df"]))
+        if cat == "association":
+            return jsonify(mc.compare_association(STATE["df"]))
+        if cat in ("anomaly", "anomalies", "anomaly-detection"):
+            return jsonify(mc.compare_anomaly(STATE["df"]))
+        return jsonify({"error": "Unknown category. Use classification, clustering, association or anomaly."}), 400
+    return safe(go)
+
 # ---------------------------------------------------------------- predict / what-if
 def _predict_row(payload):
     from mining.classification import load_classifier
@@ -566,6 +584,13 @@ def recs():
     def go():
         from analytics.hotspots import recommendations
         return jsonify({"recommendations": recommendations(STATE["df"])})
+    return safe(go)
+
+@app.get("/api/live-status")
+def live_status():
+    def go():
+        from integrations.live_data_provider import provider_status
+        return jsonify(provider_status(STATE["df"]))
     return safe(go)
 
 @app.post("/api/demo-mode")

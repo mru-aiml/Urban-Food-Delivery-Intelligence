@@ -169,6 +169,12 @@
       <h3>Future Scope</h3><p>Real-time streaming, route optimization, demand forecasting, SHAP explanations.</p>
     </div>
   </section>
+  <!-- COMPARE -->
+  <section class="view" data-view="compare">
+    <div class="page-head"><div><h1>Algorithm Comparison</h1><p class="sub">Same data, same splits — metrics computed live by the backend.</p></div></div>
+    <div class="tabs" id="cmpTabs"><button data-t="classification" class="on">Classification</button><button data-t="clustering">Clustering</button><button data-t="association">Association Rules</button><button data-t="anomaly">Anomaly Detection</button></div>
+    <div class="card"><div id="cmpNote" class="hint"></div><div id="cmpOut"></div><div class="chart-box"><canvas id="cmpChart"></canvas></div><div class="chart-box"><canvas id="cmpChart2"></canvas></div></div>
+  </section>
 </main>
 </div>
 </div>
@@ -181,5 +187,6 @@
 <script src="/static/js/predictor.js"></script>
 <script src="/static/js/hotspots.js"></script>
 <script src="/static/js/warehouse.js"></script>
+<script src="/static/js/compare.js"></script>
 </body>
 </html>
